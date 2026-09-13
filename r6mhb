@@ -1,0 +1,1277 @@
+local ok,err=pcall(function()
+local RS=game:GetService("RunService")
+local P=game:GetService("Players")
+local UIS=game:GetService("UserInputService")
+local HS=game:GetService("HttpService")
+local lp=P.LocalPlayer
+
+-- ==================== 部件列表 ====================
+local R6={"Head","Torso","Left Arm","Right Arm","Left Leg","Right Leg"}
+local R6SET={} for _,n in ipairs(R6) do R6SET[n]=true end
+local R15_TORSO_SET = {UpperTorso=true, LowerTorso=true}
+
+local EXTRA_LOWER_KEY = "__r15lower"
+local PART_LIST = {"Head","Torso","Left Arm","Right Arm","Left Leg","Right Leg", EXTRA_LOWER_KEY}
+local PART_DISPLAY = {["__r15lower"] = "R15下躯干"}
+local function partName(k) return PART_DISPLAY[k] or k end
+
+local baseSizes={} local origAtt={} local origMotorC0={}
+local rW,rT,rD=1,1,1
+local headScale=1
+local keepRespawn=false
+local moveStep=0.05
+local GROUPS={
+    {name="头",parts={"Head"}},
+    {name="躯干",parts={"Torso"}},
+    {name="左臂",parts={"Left Arm"}},
+    {name="右臂",parts={"Right Arm"}},
+    {name="左腿",parts={"Left Leg"}},
+    {name="右腿",parts={"Right Leg"}},
+}
+local enabledParts={}
+for _,gr in ipairs(GROUPS) do for _,p in ipairs(gr.parts) do enabledParts[p]=true end end
+local partOffset={}
+local partScale={}
+local partRotation={}
+for _,n in ipairs(PART_LIST) do
+    partOffset[n]=Vector3.new(0,0,0)
+    partScale[n]=Vector3.new(1,1,1)
+    partRotation[n]=Vector3.new(0,0,0)
+end
+local dumpSize={}
+local oS,oP,oT=nil,nil,nil
+
+local SAVE_DIR = "cesi_saves_r6"
+if not isfolder(SAVE_DIR) then makefolder(SAVE_DIR) end
+
+-- ==================== R15 下躯干叠加 ====================
+local r15TorsoApplied = false
+local r15TorsoObjs = {}
+local r15LowerConn = nil
+
+local r15UpperMeshId = "rbxassetid://191182090"
+local r15LowerMeshId = "rbxassetid://191182063"
+
+local function clearCharacterMeshes()
+    local c=lp.Character if not c then return end
+    for _, ch in ipairs(c:GetChildren()) do
+        if ch:IsA("CharacterMesh") then ch:Destroy() end
+    end
+end
+
+local function clearR15Torso()
+    if r15LowerConn then
+        pcall(function() r15LowerConn:Disconnect() end)
+        r15LowerConn = nil
+    end
+    for _, o in ipairs(r15TorsoObjs) do
+        pcall(function() o:Destroy() end)
+    end
+    r15TorsoObjs = {}
+end
+
+local function applyR15Torso()
+    local c = lp.Character
+    if not c then return false, "无角色" end
+    local torso = c:FindFirstChild("Torso")
+    if not torso then return false, "无 Torso（不是 R6）" end
+
+    clearR15Torso()
+    clearCharacterMeshes()
+
+    local lower = Instance.new("MeshPart")
+    lower.Name = "CesiR15LowerTorso"
+    lower.MeshId = r15LowerMeshId
+    lower.Size = Vector3.new(torso.Size.X, torso.Size.Y * 0.5, torso.Size.Z)
+    lower.Anchored = true
+    lower.CanCollide = false
+    lower.Massless = true
+    lower.Parent = c
+    table.insert(r15TorsoObjs, lower)
+
+    r15LowerConn = RS.RenderStepped:Connect(function()
+        if not lower or not lower.Parent then return end
+        local cc = lp.Character
+        if not cc then return end
+        local t = cc:FindFirstChild("Torso")
+        if not t then return end
+
+        local ps = partScale[EXTRA_LOWER_KEY] or Vector3.new(1,1,1)
+        local off = partOffset[EXTRA_LOWER_KEY] or Vector3.new(0,0,0)
+        local rt = partRotation[EXTRA_LOWER_KEY] or Vector3.new(0,0,0)
+
+        pcall(function()
+            lower.Color = t.Color
+            lower.Material = t.Material
+        end)
+
+        lower.Size = Vector3.new(t.Size.X * ps.X, t.Size.Y * 0.5 * ps.Y, t.Size.Z * ps.Z)
+
+        local basePos = CFrame.new(off.X, -t.Size.Y * 0.25 + off.Y, off.Z)
+        local rot = CFrame.Angles(math.rad(rt.X), math.rad(rt.Y), math.rad(rt.Z))
+        lower.CFrame = t.CFrame * basePos * rot
+    end)
+
+    r15TorsoApplied = true
+    return true
+end
+
+local function restoreR15Torso()
+    clearR15Torso()
+    clearCharacterMeshes()
+    r15TorsoApplied = false
+    return true
+end
+
+-- ==================== 工具函数 ====================
+local function findMotorForPart(p)
+    if not p or not p.Parent then return nil end
+    for _,m in ipairs(p.Parent:GetChildren()) do
+        if m:IsA("Motor6D") and m.Part1==p then return m end
+    end
+    for _,m in ipairs(p:GetChildren()) do
+        if m:IsA("Motor6D") and m.Part1==p then return m end
+    end
+    return nil
+end
+
+local function saveBase()
+    local c=lp.Character if not c then return end
+    baseSizes={} origAtt={} origMotorC0={}
+    for _,n in ipairs(R6) do
+        local p=c:FindFirstChild(n)
+        if p and p:IsA("BasePart") then
+            baseSizes[n]=p.Size
+            for _,a in ipairs(p:GetChildren()) do
+                if a:IsA("Attachment") then origAtt[a]=a.Position end
+            end
+            local m=findMotorForPart(p)
+            if m then origMotorC0[m]=m.C0 end
+        end
+    end
+end
+
+local function getScaleOf(n)
+    if n=="HumanoidRootPart" then return Vector3.new(1,1,1) end
+    if enabledParts[n]==false then return Vector3.new(1,1,1) end
+    if n=="Head" then return Vector3.new(headScale,headScale,headScale) end
+    return Vector3.new(rW,rT,rD)
+end
+
+local function applyScale()
+    local c=lp.Character if not c then return end
+    for _,n in ipairs(R6) do
+        local p=c:FindFirstChild(n)
+        if p and p:IsA("BasePart") and baseSizes[n] then
+            local b=baseSizes[n]
+            local tgt=dumpSize[n] or b
+            local s=getScaleOf(n)
+            local ps=partScale[n] or Vector3.new(1,1,1)
+            local sx,sy,sz=tgt.X*s.X*ps.X,tgt.Y*s.Y*ps.Y,tgt.Z*s.Z*ps.Z
+            pcall(function() p.Size=Vector3.new(sx,sy,sz) end)
+            local rX=sx/b.X local rY=sy/b.Y local rZ=sz/b.Z
+            local off=partOffset[n] or Vector3.new(0,0,0)
+            for a,o in pairs(origAtt) do
+                if a.Parent==p then
+                    pcall(function() a.Position=Vector3.new(o.X*rX+off.X,o.Y*rY+off.Y,o.Z*rZ+off.Z) end)
+                end
+            end
+            local m=findMotorForPart(p)
+            if m and origMotorC0[m] then
+                local rot=partRotation[n] or Vector3.new(0,0,0)
+                local rotCF=CFrame.Angles(math.rad(rot.X),math.rad(rot.Y),math.rad(rot.Z))
+                pcall(function() m.C0=origMotorC0[m]*rotCF end)
+            end
+        end
+    end
+end
+
+local DOFF={Hat={0,0.6,0},Hair={0,0.2,0},Face={0,0,-0.4},Neck={0,-0.2,0},Shoulder={0,0,0},Front={0,0,-0.4},Back={0,0,0.5},Waist={0,-0.2,0},Jacket={0,0,0},MeshPart={0,0,0}}
+local MP={Hat="Head",Hair="Head",Face="Head",Neck="Head",Shoulder="Torso",Front="Torso",Back="Torso",Waist="Torso",Jacket="Torso",MeshPart="Torso"}
+local ACC={
+    {name="腰部蝴蝶结裙",type="Waist",mesh="rbxassetid://107662008702107",tex="rbxassetid://108643951163165",size=Vector3.new(1.442,0.649,1.429)},
+    {name="帽子",type="Hat",mesh="rbxassetid://119265790328389",tex="rbxassetid://119197601207590",size=Vector3.new(1.102,0.731,0.826)},
+    {name="白发",type="Hair",mesh="rbxassetid://18452966023",tex="rbxassetid://18452817534",size=Vector3.new(1.405,2.760,1.572)},
+}
+local BODY={}
+for _,n in ipairs(R6) do table.insert(BODY,{name=n,part=n,mesh=nil,tex=nil,size=nil,originalMesh=nil,isReplaced=false}) end
+
+local function initAcc(it)
+    local d=DOFF[it.type] or {0,0,0}
+    it.oX,it.oY,it.oZ=d[1],d[2],d[3]
+    it.sx,it.sy,it.sz=1,1,1
+    it.rX,it.rY,it.rZ=0,0,0
+    it.step=0.1 it.handle=nil it.conn=nil it.isWorn=false
+end
+for _,it in ipairs(ACC) do initAcc(it) end
+
+local function rec2D()
+    local c=lp.Character if not c then return end
+    local s=c:FindFirstChildOfClass("Shirt") if s and not oS then oS=s.ShirtTemplate end
+    local p=c:FindFirstChildOfClass("Pants") if p and not oP then oP=p.PantsTemplate end
+    local g=c:FindFirstChildOfClass("ShirtGraphic") if g and not oT then oT=g.Graphic end
+end
+
+-- ==================== 配件穿戴 ====================
+local function fP(c,n) return c:FindFirstChild(n) or c:FindFirstChild("Torso") or c:FindFirstChild("HumanoidRootPart") end
+local function getOff(it) return CFrame.new(it.oX,it.oY,it.oZ)*CFrame.Angles(math.rad(it.rX or 0),math.rad(it.rY or 0),math.rad(it.rZ or 0)) end
+
+local wear, unWear
+
+wear=function(it,btn)
+    local c=lp.Character if not c then return false end
+    if it.type=="Shirt" then
+        local s=c:FindFirstChildOfClass("Shirt") if not s then s=Instance.new("Shirt") s.Parent=c end
+        s.ShirtTemplate=it.url it.handle=s it.isWorn=true
+        if btn then btn.BackgroundColor3=Color3.fromRGB(30,100,60) btn.Text="  ● "..it.name.." [2D衬衫]" end
+        return true
+    end
+    if it.type=="Pants" then
+        local p=c:FindFirstChildOfClass("Pants") if not p then p=Instance.new("Pants") p.Parent=c end
+        p.PantsTemplate=it.url it.handle=p it.isWorn=true
+        if btn then btn.BackgroundColor3=Color3.fromRGB(30,100,60) btn.Text="  ● "..it.name.." [2D裤]" end
+        return true
+    end
+    if it.type=="ShirtGraphic" then
+        local g2=c:FindFirstChildOfClass("ShirtGraphic") if not g2 then g2=Instance.new("ShirtGraphic") g2.Parent=c end
+        g2.Graphic=it.url it.handle=g2 it.isWorn=true
+        if btn then btn.BackgroundColor3=Color3.fromRGB(30,100,60) btn.Text="  ● "..it.name.." [2D T恤]" end
+        return true
+    end
+    local p=fP(c,it.mount) if not p then return false end
+    local h=Instance.new("MeshPart")
+    h.Name="Item_"..it.name
+    h.MeshId=it.mesh
+    h.TextureID=it.tex or ""
+    h.Size=Vector3.new(it.size.X*it.sx,it.size.Y*it.sy,it.size.Z*it.sz)
+    h.CanCollide=false h.Massless=true h.Anchored=true h.Parent=c
+    it.handle=h
+    it.conn=RS.RenderStepped:Connect(function()
+        if not h or not h.Parent then if it.conn then it.conn:Disconnect() it.conn=nil end return end
+        local cc=lp.Character if not cc then return end
+        local pp=fP(cc,it.mount) if not pp then return end
+        h.CFrame=pp.CFrame*getOff(it)
+    end)
+    if btn then btn.BackgroundColor3=Color3.fromRGB(30,100,60) btn.Text="  ● "..it.name end
+    return true
+end
+
+unWear=function(it,btn)
+    local c=lp.Character
+    if it.type=="Shirt" then if c then local s=c:FindFirstChildOfClass("Shirt") if s and oS then s.ShirtTemplate=oS end end it.handle=nil it.isWorn=false if btn then btn.BackgroundColor3=Color3.fromRGB(40,40,50) btn.Text="  ○ "..it.name.." [2D衬衫]" end return end
+    if it.type=="Pants" then if c then local p=c:FindFirstChildOfClass("Pants") if p and oP then p.PantsTemplate=oP end end it.handle=nil it.isWorn=false if btn then btn.BackgroundColor3=Color3.fromRGB(40,40,50) btn.Text="  ○ "..it.name.." [2D裤]" end return end
+    if it.type=="ShirtGraphic" then if c then local g2=c:FindFirstChildOfClass("ShirtGraphic") if g2 and oT then g2.Graphic=oT end end it.handle=nil it.isWorn=false if btn then btn.BackgroundColor3=Color3.fromRGB(40,40,50) btn.Text="  ○ "..it.name.." [2D T恤]" end return end
+    if it.conn then it.conn:Disconnect() it.conn=nil end
+    if it.handle then it.handle:Destroy() it.handle=nil end
+    if btn then btn.BackgroundColor3=Color3.fromRGB(40,40,50) btn.Text="  ○ "..it.name end
+end
+
+local function rfs(it)
+    if it.handle and it.handle:IsA("MeshPart") then
+        it.handle.Size=Vector3.new(it.size.X*it.sx,it.size.Y*it.sy,it.size.Z*it.sz)
+    end
+end
+
+-- ==================== 身体替换 ====================
+local function replaceBody(it)
+    local c=lp.Character if not c then return false end
+    local p=c:FindFirstChild(it.part)
+    if not p or not p:IsA("BasePart") then return false end
+
+    if not it.originalMesh then
+        if p:IsA("MeshPart") then
+            it.originalMesh = {kind="MeshPart", mesh=p.MeshId, tex=p.TextureID}
+        else
+            local sm = p:FindFirstChildOfClass("SpecialMesh")
+            it.originalMesh = {
+                kind = "Part",
+                mesh = sm and sm.MeshId or "",
+                tex  = sm and sm.TextureId or "",
+                hasSM = sm ~= nil
+            }
+        end
+    end
+
+    if p:IsA("MeshPart") then
+        if it.mesh and it.mesh~="" then pcall(function() p.MeshId=it.mesh end) end
+        if it.tex and it.tex~=""  then pcall(function() p.TextureID=it.tex end) end
+    else
+        local sm = p:FindFirstChildOfClass("SpecialMesh")
+        if not sm then
+            sm = Instance.new("SpecialMesh")
+            sm.Parent = p
+        end
+        if it.mesh and it.mesh~="" then pcall(function() sm.MeshId=it.mesh end) end
+        if it.tex and it.tex~=""  then pcall(function() sm.TextureId=it.tex end) end
+    end
+
+    if it.size then dumpSize[it.part]=it.size end
+    applyScale()
+    it.isReplaced=true
+    return true
+end
+
+local function restoreBody(it)
+    local c=lp.Character if not c then return false end
+    local p=c:FindFirstChild(it.part)
+    if not p or not p:IsA("BasePart") then return false end
+
+    if it.originalMesh then
+        if it.originalMesh.kind=="MeshPart" and p:IsA("MeshPart") then
+            pcall(function()
+                p.MeshId    = it.originalMesh.mesh
+                p.TextureID = it.originalMesh.tex
+            end)
+        else
+            local sm = p:FindFirstChildOfClass("SpecialMesh")
+            if it.originalMesh.hasSM and sm then
+                pcall(function()
+                    sm.MeshId    = it.originalMesh.mesh
+                    sm.TextureId = it.originalMesh.tex
+                end)
+            elseif sm then
+                sm:Destroy()
+            end
+        end
+    end
+
+    dumpSize[it.part]=nil
+    applyScale()
+    it.isReplaced=false
+    return true
+end
+
+-- ==================== dump 解析 ====================
+local function parseDump(text)
+    local accItems={} local bodyData={} local current=nil
+    local function flush()
+        if not current then return end
+        if current.className=="Accessory" then table.insert(accItems,current)
+        elseif current.className=="MeshPart" and R6SET[current.name] then
+            bodyData[current.name]={mesh=current.mesh,tex=current.tex,size=current.sizeVec}
+        elseif current.className=="MeshPart" and R15_TORSO_SET[current.name] then
+            if current.name == "UpperTorso" and current.mesh and current.mesh ~= "" then
+                r15UpperMeshId = current.mesh
+            elseif current.name == "LowerTorso" and current.mesh and current.mesh ~= "" then
+                r15LowerMeshId = current.mesh
+            end
+            bodyData[current.name] = {mesh=current.mesh, tex=current.tex, size=current.sizeVec}
+        elseif current.className=="Shirt" and current.url then table.insert(accItems,{name="衬衫",type="Shirt",url=current.url,mesh="",tex="",size=Vector3.new(0,0,0)})
+        elseif current.className=="Pants" and current.url then table.insert(accItems,{name="裤子",type="Pants",url=current.url,mesh="",tex="",size=Vector3.new(0,0,0)})
+        elseif current.className=="ShirtGraphic" and current.url then table.insert(accItems,{name="T恤",type="ShirtGraphic",url=current.url,mesh="",tex="",size=Vector3.new(0,0,0)}) end
+        current=nil
+    end
+    for line in text:gmatch("[^\r\n]+") do
+        local name,className
+        local aN=line:match("%[Accessory%]%s+Accessory%s+%((.-)%)")
+        if aN then name=aN className="Accessory"
+        elseif line:match("%[Accessory%]") then name=line:match("%[Accessory%]%s+(.+)") or "未命名" className="Accessory"
+        elseif line:match("%[MeshPart%]") then name=line:match("%[MeshPart%]%s+(.+)") or "MeshPart" className="MeshPart"
+        elseif line:match("%[Part%]") then name=line:match("%[Part%]%s+(.+)") or "Part" className="MeshPart"
+        elseif line:match("%[Shirt%]") then name="Shirt" className="Shirt"
+        elseif line:match("%[Pants%]") then name="Pants" className="Pants"
+        elseif line:match("%[ShirtGraphic%]") then name="ShirtGraphic" className="ShirtGraphic" end
+        if name then flush() current={name=name,className=className}
+        elseif current then
+            if current.className=="Shirt" then local u=line:match("Shirt:%s*(%S+)") if u and u~="" then current.url=u end
+            elseif current.className=="Pants" then local u=line:match("Pants:%s*(%S+)") if u and u~="" then current.url=u end
+            elseif current.className=="ShirtGraphic" then local u=line:match("Graphic:%s*(%S+)") if u and u~="" then current.url=u end
+            else
+                local t=line:match("Type:%s*Enum%.AccessoryType%.(%w+)") if t then current.type=t end
+                local hm=line:match("Handle%.MeshId:%s*(%S+)") if hm then current.mesh=hm end
+                local ht=line:match("Handle%.Tex:%s*(%S+)") if ht and ht~="" then current.tex=ht end
+                local hsz=line:match("Handle%.Size:%s*(.+)") if hsz then current.sizeStr=hsz end
+                if not current.mesh then local m=line:match("MeshId:%s*(%S+)") if m then current.mesh=m end end
+                if not current.tex then local t2=line:match("Tex:%s*(%S+)") if t2 and t2~="" then current.tex=t2 end end
+                if not current.sizeStr then local s=line:match("Size:%s*(.+)") if s then current.sizeStr=s end end
+                if current.sizeStr then
+                    local sx,sy,sz=current.sizeStr:match("([%d%.%-]+),%s*([%d%.%-]+),%s*([%d%.%-]+)")
+                    if sx then current.sizeVec=Vector3.new(tonumber(sx),tonumber(sy),tonumber(sz)) end
+                end
+            end
+        end
+    end
+    flush()
+    local res={}
+    for _,it in ipairs(accItems) do
+        if it.type=="Shirt" or it.type=="Pants" or it.type=="ShirtGraphic" then
+            if it.url then initAcc(it) table.insert(res,it) end
+        elseif it.mesh and it.sizeVec then
+            it.size=it.sizeVec it.type=it.type or "MeshPart" it.mount=MP[it.type] or "Torso"
+            initAcc(it) table.insert(res,it)
+        end
+    end
+    return res,bodyData
+end
+
+-- ==================== UI ====================
+local g=Instance.new("ScreenGui")
+g.Name="CesiLoader_R6"
+g.ResetOnSpawn=false
+g.DisplayOrder=9999
+g.IgnoreGuiInset=true
+g.Parent=lp:WaitForChild("PlayerGui")
+
+local wS=1 local bW,bH=380,640
+local win=Instance.new("Frame") win.Size=UDim2.new(0,bW,0,bH) win.Position=UDim2.new(0,8,0,20) win.BackgroundColor3=Color3.fromRGB(15,15,20) win.BorderSizePixel=0 win.Active=true win.Parent=g
+local tb=Instance.new("Frame") tb.Size=UDim2.new(1,0,0,26) tb.BackgroundColor3=Color3.fromRGB(40,40,60) tb.BorderSizePixel=0 tb.Active=true tb.Parent=win
+Instance.new("UICorner",tb).CornerRadius=UDim.new(0,5)
+local title=Instance.new("TextLabel") title.Size=UDim2.new(1,-250,1,0) title.Position=UDim2.new(0,6,0,0) title.BackgroundTransparency=1 title.Font=Enum.Font.GothamBold title.TextSize=11 title.TextColor3=Color3.fromRGB(0,255,0) title.TextXAlignment=Enum.TextXAlignment.Left title.Text="🎩 R6 拖我" title.Parent=tb
+local df=Instance.new("Frame") df.Size=UDim2.new(1,-10,0,110) df.Position=UDim2.new(0,5,0,30) df.BackgroundColor3=Color3.fromRGB(30,30,45) df.BorderSizePixel=0 df.Parent=win
+Instance.new("UICorner",df).CornerRadius=UDim.new(0,4)
+local dIn=Instance.new("TextBox") dIn.Size=UDim2.new(1,-10,0,60) dIn.Position=UDim2.new(0,5,0,5) dIn.BackgroundColor3=Color3.fromRGB(15,15,20) dIn.BorderSizePixel=0 dIn.Font=Enum.Font.Code dIn.TextSize=9 dIn.TextColor3=Color3.fromRGB(180,255,180) dIn.PlaceholderText="粘贴 dump..." dIn.PlaceholderColor3=Color3.fromRGB(100,100,110) dIn.Text="" dIn.TextWrapped=true dIn.TextXAlignment=Enum.TextXAlignment.Left dIn.TextYAlignment=Enum.TextYAlignment.Top dIn.ClearTextOnFocus=false dIn.MultiLine=true dIn.Parent=df
+Instance.new("UICorner",dIn).CornerRadius=UDim.new(0,3)
+local pB=Instance.new("TextButton") pB.Size=UDim2.new(0,100,0,28) pB.Position=UDim2.new(0,5,0,70) pB.BackgroundColor3=Color3.fromRGB(0,120,210) pB.BorderSizePixel=0 pB.Font=Enum.Font.GothamBold pB.TextSize=11 pB.TextColor3=Color3.new(1,1,1) pB.Text="解析并刷新" pB.Parent=df
+Instance.new("UICorner",pB).CornerRadius=UDim.new(0,3)
+local rB=Instance.new("TextButton") rB.Size=UDim2.new(0,100,0,28) rB.Position=UDim2.new(0,110,0,70) rB.BackgroundColor3=Color3.fromRGB(100,100,140) rB.BorderSizePixel=0 rB.Font=Enum.Font.GothamBold rB.TextSize=10 rB.TextColor3=Color3.new(1,1,1) rB.Text="清空列表" rB.Parent=df
+Instance.new("UICorner",rB).CornerRadius=UDim.new(0,3)
+local sc=Instance.new("ScrollingFrame") sc.Size=UDim2.new(1,-10,1,-152) sc.Position=UDim2.new(0,5,0,146) sc.BackgroundColor3=Color3.fromRGB(5,5,8) sc.BorderSizePixel=0 sc.ScrollBarThickness=5 sc.CanvasSize=UDim2.new(0,0,0,0) sc.Parent=win
+Instance.new("UICorner",sc).CornerRadius=UDim.new(0,4)
+local lL=Instance.new("UIListLayout") lL.Padding=UDim.new(0,4) lL.Parent=sc
+
+local _showSave, _showLoad, rebuild
+
+local function mkTb(text,x,w,col,cb)
+    local b=Instance.new("TextButton") b.Size=UDim2.new(0,w,0,20) b.Position=UDim2.new(1,x,0,3) b.BackgroundColor3=col b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=10 b.TextColor3=Color3.new(1,1,1) b.Text=text b.Parent=tb
+    Instance.new("UICorner",b).CornerRadius=UDim.new(0,3) b.MouseButton1Click:Connect(cb)
+end
+mkTb("-",-210,24,Color3.fromRGB(120,60,120),function() wS=math.max(0.5,wS-0.1) win.Size=UDim2.new(0,bW*wS,0,bH*wS) end)
+mkTb("+",-184,24,Color3.fromRGB(120,60,120),function() wS=math.min(1.5,wS+0.1) win.Size=UDim2.new(0,bW*wS,0,bH*wS) end)
+mkTb("保存",-158,42,Color3.fromRGB(60,130,80),function() if _showSave then _showSave() end end)
+mkTb("读取",-114,42,Color3.fromRGB(80,100,160),function() if _showLoad then _showLoad() end end)
+mkTb("全清",-70,46,Color3.fromRGB(160,60,60),function()
+    for _,it in ipairs(ACC) do
+        if it.conn then it.conn:Disconnect() it.conn=nil end
+        if it.handle then it.handle:Destroy() it.handle=nil end
+        it.isWorn=false
+    end
+    local c=lp.Character
+    if c then
+        local s=c:FindFirstChildOfClass("Shirt") if s and oS then s.ShirtTemplate=oS end
+        local p=c:FindFirstChildOfClass("Pants") if p and oP then p.PantsTemplate=oP end
+        local g2=c:FindFirstChildOfClass("ShirtGraphic") if g2 and oT then g2.Graphic=oT end
+    end
+    for _,it in ipairs(BODY) do if it.isReplaced then restoreBody(it) end end
+    restoreR15Torso()
+    rW,rT,rD,headScale=1,1,1,1 dumpSize={}
+    for _,n in ipairs(PART_LIST) do
+        partOffset[n]=Vector3.new(0,0,0)
+        partScale[n]=Vector3.new(1,1,1)
+        partRotation[n]=Vector3.new(0,0,0)
+    end
+    applyScale() rebuild() title.Text="已全清"
+end)
+mkTb("✕",-30,24,Color3.fromRGB(180,60,60),function() g:Destroy() end)
+
+local dg=false local dS,sP
+tb.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dg=true dS=i.Position sP=win.Position end end)
+tb.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dg=false end end)
+UIS.InputChanged:Connect(function(i) if not dg then return end if i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch then local d=i.Position-dS win.Position=UDim2.new(sP.X.Scale,sP.X.Offset+d.X,sP.Y.Scale,sP.Y.Offset+d.Y) end end)
+UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dg=false end end)
+
+local function mkSec(t,lo)
+    local h=Instance.new("TextLabel") h.Size=UDim2.new(1,-6,0,20) h.BackgroundColor3=Color3.fromRGB(40,40,60) h.BorderSizePixel=0 h.Font=Enum.Font.GothamBold h.TextSize=11 h.TextColor3=Color3.fromRGB(255,200,100) h.TextXAlignment=Enum.TextXAlignment.Left h.Text="  ━━ "..t.." ━━" h.LayoutOrder=lo h.Parent=sc
+    Instance.new("UICorner",h).CornerRadius=UDim.new(0,3)
+end
+
+-- ==================== 菜单重建 ====================
+rebuild=function()
+    for _,c in ipairs(sc:GetChildren()) do if c:IsA("TextButton") or c:IsA("TextLabel") or c:IsA("Frame") then c:Destroy() end end
+    local order=1
+    mkSec("体型调整",order) order=order+1
+    local AX={{n="高",g=function() return rT end,s=function(v) rT=v end},{n="宽",g=function() return rW end,s=function(v) rW=v end},{n="厚",g=function() return rD end,s=function(v) rD=v end},{n="头大小",g=function() return headScale end,s=function(v) headScale=v end}}
+    for _,a in ipairs(AX) do
+        local row=Instance.new("Frame") row.Size=UDim2.new(1,-6,0,30) row.BackgroundTransparency=1 row.LayoutOrder=order order=order+1 row.Parent=sc
+        local lbl=Instance.new("TextLabel") lbl.Size=UDim2.new(0,100,1,0) lbl.BackgroundTransparency=1 lbl.Font=Enum.Font.GothamBold lbl.TextSize=11 lbl.TextColor3=Color3.fromRGB(200,200,220) lbl.TextXAlignment=Enum.TextXAlignment.Left lbl.Text=a.n lbl.Parent=row
+        local val=Instance.new("TextLabel") val.Size=UDim2.new(0,60,1,0) val.Position=UDim2.new(1,-130,0,0) val.BackgroundColor3=Color3.fromRGB(30,30,45) val.BorderSizePixel=0 val.Font=Enum.Font.Code val.TextSize=11 val.TextColor3=Color3.fromRGB(150,255,150) val.Text=string.format("%.2fx",a.g()) val.Parent=row
+        Instance.new("UICorner",val).CornerRadius=UDim.new(0,3)
+        local function mini(t,x,col,d)
+            local b=Instance.new("TextButton") b.Size=UDim2.new(0,30,1,0) b.Position=UDim2.new(1,x,0,0) b.BackgroundColor3=col b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=16 b.TextColor3=Color3.new(1,1,1) b.Text=t b.Parent=row
+            Instance.new("UICorner",b).CornerRadius=UDim.new(0,3)
+            b.MouseButton1Click:Connect(function() local nv=math.max(0.3,math.min(3,a.g()+d)) a.s(nv) val.Text=string.format("%.2fx",a.g()) applyScale() end)
+        end
+        mini("-",-100,Color3.fromRGB(160,60,60),-0.1)
+        mini("+",-30,Color3.fromRGB(60,140,60),0.1)
+    end
+    mkSec("作用范围",order) order=order+1
+    do
+        local gr=Instance.new("Frame") gr.Size=UDim2.new(1,-6,0,90) gr.BackgroundTransparency=1 gr.LayoutOrder=order order=order+1 gr.Parent=sc
+        local gl=Instance.new("UIListLayout") gl.FillDirection=Enum.FillDirection.Horizontal gl.Padding=UDim.new(0,4) gl.Parent=gr
+        for _,grp in ipairs(GROUPS) do
+            local isOn = enabledParts[grp.parts[1]] and true or false
+            local b=Instance.new("TextButton")
+            b.Size=UDim2.new(0,72,0,26)
+            b.BackgroundColor3=isOn and Color3.fromRGB(60,130,80) or Color3.fromRGB(60,60,70)
+            b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=11 b.TextColor3=Color3.new(1,1,1)
+            b.Text=(isOn and "● " or "○ ")..grp.name
+            b.Parent=gr
+            Instance.new("UICorner",b).CornerRadius=UDim.new(0,4)
+            b.MouseButton1Click:Connect(function()
+                local on=enabledParts[grp.parts[1]]
+                for _,p in ipairs(grp.parts) do enabledParts[p]=not on end
+                if not on then b.BackgroundColor3=Color3.fromRGB(60,130,80) b.Text="● "..grp.name else b.BackgroundColor3=Color3.fromRGB(60,60,70) b.Text="○ "..grp.name end
+                applyScale()
+            end)
+        end
+    end
+
+    mkSec("肢体/额外部件 移动 + 拉伸 + 旋转",order) order=order+1
+    do
+        local idx=1
+        local box=Instance.new("Frame") box.Size=UDim2.new(1,-6,0,290) box.BackgroundColor3=Color3.fromRGB(25,25,32) box.BorderSizePixel=0 box.LayoutOrder=order order=order+1 box.Parent=sc
+        Instance.new("UICorner",box).CornerRadius=UDim.new(0,4)
+        local sl=Instance.new("TextLabel") sl.Size=UDim2.new(1,-80,0,26) sl.Position=UDim2.new(0,40,0,3) sl.BackgroundColor3=Color3.fromRGB(40,40,55) sl.BorderSizePixel=0 sl.Font=Enum.Font.Code sl.TextSize=10 sl.TextColor3=Color3.fromRGB(255,220,100) sl.Text=partName(PART_LIST[1]) sl.Parent=box
+        Instance.new("UICorner",sl).CornerRadius=UDim.new(0,3)
+        local function us()
+            local key = PART_LIST[idx]
+            local off=partOffset[key] or Vector3.new(0,0,0)
+            local sc2=partScale[key] or Vector3.new(1,1,1)
+            local rt=partRotation[key] or Vector3.new(0,0,0)
+            sl.Text=string.format("%s X%+.2f Y%+.2f Z%+.2f | S%.2f %.2f %.2f | R%+.0f %+.0f %+.0f",partName(key),off.X,off.Y,off.Z,sc2.X,sc2.Y,sc2.Z,rt.X,rt.Y,rt.Z)
+        end
+        local pb=Instance.new("TextButton") pb.Size=UDim2.new(0,32,0,26) pb.Position=UDim2.new(0,4,0,3) pb.BackgroundColor3=Color3.fromRGB(80,80,100) pb.BorderSizePixel=0 pb.Font=Enum.Font.GothamBold pb.TextSize=14 pb.TextColor3=Color3.new(1,1,1) pb.Text="◀" pb.Parent=box
+        Instance.new("UICorner",pb).CornerRadius=UDim.new(0,3)
+        pb.MouseButton1Click:Connect(function() idx=idx-1 if idx<1 then idx=#PART_LIST end us() end)
+        local nb=Instance.new("TextButton") nb.Size=UDim2.new(0,32,0,26) nb.Position=UDim2.new(1,-36,0,3) nb.BackgroundColor3=Color3.fromRGB(80,80,100) nb.BorderSizePixel=0 nb.Font=Enum.Font.GothamBold nb.TextSize=14 nb.TextColor3=Color3.new(1,1,1) nb.Text="▶" nb.Parent=box
+        Instance.new("UICorner",nb).CornerRadius=UDim.new(0,3)
+        nb.MouseButton1Click:Connect(function() idx=idx+1 if idx>#PART_LIST then idx=1 end us() end)
+        local stl=Instance.new("TextLabel") stl.Size=UDim2.new(0,40,0,20) stl.Position=UDim2.new(0,5,0,32) stl.BackgroundTransparency=1 stl.Font=Enum.Font.GothamBold stl.TextSize=11 stl.TextColor3=Color3.fromRGB(255,220,100) stl.TextXAlignment=Enum.TextXAlignment.Left stl.Text="步长:" stl.Parent=box
+        local si=Instance.new("TextBox") si.Size=UDim2.new(0,70,0,22) si.Position=UDim2.new(0,45,0,31) si.BackgroundColor3=Color3.fromRGB(40,40,55) si.BorderSizePixel=0 si.Font=Enum.Font.Code si.TextSize=11 si.TextColor3=Color3.fromRGB(255,220,100) si.Text=string.format("%.3g",moveStep) si.ClearTextOnFocus=false si.Parent=box
+        Instance.new("UICorner",si).CornerRadius=UDim.new(0,3)
+        si.FocusLost:Connect(function() local v=tonumber(si.Text) if v and v>0 and v<=2 then moveStep=v si.Text=string.format("%.3g",v) else si.Text=string.format("%.3g",moveStep) end end)
+        local function q(t,x,v) local b=Instance.new("TextButton") b.Size=UDim2.new(0,55,0,22) b.Position=UDim2.new(0,x,0,31) b.BackgroundColor3=Color3.fromRGB(60,80,60) b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=10 b.TextColor3=Color3.new(1,1,1) b.Text=t b.Parent=box
+            Instance.new("UICorner",b).CornerRadius=UDim.new(0,3)
+            b.MouseButton1Click:Connect(function() moveStep=v si.Text=string.format("%.3g",v) end)
+        end
+        q("0.01",120,0.01) q("0.05",178,0.05) q("0.1",236,0.1) q("0.5",294,0.5)
+        local function ab(t,x,y,w,col,cb)
+            local b=Instance.new("TextButton")
+            b.Size=UDim2.new(0,w,0,22) b.Position=UDim2.new(0,x,0,y)
+            b.BackgroundColor3=col b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=10 b.TextColor3=Color3.new(1,1,1)
+            b.Text=t b.Parent=box
+            Instance.new("UICorner",b).CornerRadius=UDim.new(0,3)
+            b.MouseButton1Click:Connect(cb)
+        end
+        ab("X-",5,58,90,Color3.fromRGB(140,60,60),function() local n=PART_LIST[idx] local o=partOffset[n] or Vector3.new(0,0,0) partOffset[n]=Vector3.new(o.X-moveStep,o.Y,o.Z) us() applyScale() end)
+        ab("X+",100,58,90,Color3.fromRGB(60,140,60),function() local n=PART_LIST[idx] local o=partOffset[n] or Vector3.new(0,0,0) partOffset[n]=Vector3.new(o.X+moveStep,o.Y,o.Z) us() applyScale() end)
+        ab("SX-",195,58,70,Color3.fromRGB(180,90,60),function() local n=PART_LIST[idx] local s=partScale[n] or Vector3.new(1,1,1) partScale[n]=Vector3.new(math.max(0.05,s.X-moveStep),s.Y,s.Z) us() applyScale() end)
+        ab("SX+",270,58,70,Color3.fromRGB(60,160,80),function() local n=PART_LIST[idx] local s=partScale[n] or Vector3.new(1,1,1) partScale[n]=Vector3.new(math.min(10,s.X+moveStep),s.Y,s.Z) us() applyScale() end)
+        ab("Y-",5,84,90,Color3.fromRGB(140,60,60),function() local n=PART_LIST[idx] local o=partOffset[n] or Vector3.new(0,0,0) partOffset[n]=Vector3.new(o.X,o.Y-moveStep,o.Z) us() applyScale() end)
+        ab("Y+",100,84,90,Color3.fromRGB(60,140,60),function() local n=PART_LIST[idx] local o=partOffset[n] or Vector3.new(0,0,0) partOffset[n]=Vector3.new(o.X,o.Y+moveStep,o.Z) us() applyScale() end)
+        ab("SY-",195,84,70,Color3.fromRGB(180,90,60),function() local n=PART_LIST[idx] local s=partScale[n] or Vector3.new(1,1,1) partScale[n]=Vector3.new(s.X,math.max(0.05,s.Y-moveStep),s.Z) us() applyScale() end)
+        ab("SY+",270,84,70,Color3.fromRGB(60,160,80),function() local n=PART_LIST[idx] local s=partScale[n] or Vector3.new(1,1,1) partScale[n]=Vector3.new(s.X,math.min(10,s.Y+moveStep),s.Z) us() applyScale() end)
+        ab("Z-",5,110,90,Color3.fromRGB(140,60,60),function() local n=PART_LIST[idx] local o=partOffset[n] or Vector3.new(0,0,0) partOffset[n]=Vector3.new(o.X,o.Y,o.Z-moveStep) us() applyScale() end)
+        ab("Z+",100,110,90,Color3.fromRGB(60,140,60),function() local n=PART_LIST[idx] local o=partOffset[n] or Vector3.new(0,0,0) partOffset[n]=Vector3.new(o.X,o.Y,o.Z+moveStep) us() applyScale() end)
+        ab("SZ-",195,110,70,Color3.fromRGB(180,90,60),function() local n=PART_LIST[idx] local s=partScale[n] or Vector3.new(1,1,1) partScale[n]=Vector3.new(s.X,s.Y,math.max(0.05,s.Z-moveStep)) us() applyScale() end)
+        ab("SZ+",270,110,70,Color3.fromRGB(60,160,80),function() local n=PART_LIST[idx] local s=partScale[n] or Vector3.new(1,1,1) partScale[n]=Vector3.new(s.X,s.Y,math.min(10,s.Z+moveStep)) us() applyScale() end)
+        ab("RX-",5,136,90,Color3.fromRGB(130,70,160),function() local n=PART_LIST[idx] local r=partRotation[n] or Vector3.new(0,0,0) partRotation[n]=Vector3.new(r.X-moveStep*50,r.Y,r.Z) us() applyScale() end)
+        ab("RX+",100,136,90,Color3.fromRGB(70,130,180),function() local n=PART_LIST[idx] local r=partRotation[n] or Vector3.new(0,0,0) partRotation[n]=Vector3.new(r.X+moveStep*50,r.Y,r.Z) us() applyScale() end)
+        ab("RY-",195,136,90,Color3.fromRGB(130,70,160),function() local n=PART_LIST[idx] local r=partRotation[n] or Vector3.new(0,0,0) partRotation[n]=Vector3.new(r.X,r.Y-moveStep*50,r.Z) us() applyScale() end)
+        ab("RY+",290,136,90,Color3.fromRGB(70,130,180),function() local n=PART_LIST[idx] local r=partRotation[n] or Vector3.new(0,0,0) partRotation[n]=Vector3.new(r.X,r.Y+moveStep*50,r.Z) us() applyScale() end)
+        ab("RZ-",5,162,90,Color3.fromRGB(130,70,160),function() local n=PART_LIST[idx] local r=partRotation[n] or Vector3.new(0,0,0) partRotation[n]=Vector3.new(r.X,r.Y,r.Z-moveStep*50) us() applyScale() end)
+        ab("RZ+",100,162,90,Color3.fromRGB(70,130,180),function() local n=PART_LIST[idx] local r=partRotation[n] or Vector3.new(0,0,0) partRotation[n]=Vector3.new(r.X,r.Y,r.Z+moveStep*50) us() applyScale() end)
+        ab("重置旋转",195,162,150,Color3.fromRGB(100,100,140),function() partRotation[PART_LIST[idx]]=Vector3.new(0,0,0) us() applyScale() end)
+        local ro=Instance.new("TextButton") ro.Size=UDim2.new(0,150,0,24) ro.Position=UDim2.new(0,5,0,190) ro.BackgroundColor3=Color3.fromRGB(120,80,80) ro.BorderSizePixel=0 ro.Font=Enum.Font.GothamBold ro.TextSize=11 ro.TextColor3=Color3.new(1,1,1) ro.Text="重置此部件" ro.Parent=box
+        Instance.new("UICorner",ro).CornerRadius=UDim.new(0,3)
+        ro.MouseButton1Click:Connect(function() local n=PART_LIST[idx] partOffset[n]=Vector3.new(0,0,0) partScale[n]=Vector3.new(1,1,1) partRotation[n]=Vector3.new(0,0,0) us() applyScale() end)
+        local rs=Instance.new("TextButton") rs.Size=UDim2.new(0,90,0,24) rs.Position=UDim2.new(0,160,0,190) rs.BackgroundColor3=Color3.fromRGB(140,100,60) rs.BorderSizePixel=0 rs.Font=Enum.Font.GothamBold rs.TextSize=11 rs.TextColor3=Color3.new(1,1,1) rs.Text="重置拉伸" rs.Parent=box
+        Instance.new("UICorner",rs).CornerRadius=UDim.new(0,3)
+        rs.MouseButton1Click:Connect(function() local n=PART_LIST[idx] partScale[n]=Vector3.new(1,1,1) us() applyScale() end)
+        local ra=Instance.new("TextButton") ra.Size=UDim2.new(0,90,0,24) ra.Position=UDim2.new(0,255,0,190) ra.BackgroundColor3=Color3.fromRGB(140,60,60) ra.BorderSizePixel=0 ra.Font=Enum.Font.GothamBold ra.TextSize=11 ra.TextColor3=Color3.new(1,1,1) ra.Text="重置全部" ra.Parent=box
+        Instance.new("UICorner",ra).CornerRadius=UDim.new(0,3)
+        ra.MouseButton1Click:Connect(function() for _,n in ipairs(PART_LIST) do partOffset[n]=Vector3.new(0,0,0) partScale[n]=Vector3.new(1,1,1) partRotation[n]=Vector3.new(0,0,0) end us() applyScale() end)
+        local tip=Instance.new("TextLabel") tip.Size=UDim2.new(1,-10,0,60) tip.Position=UDim2.new(0,5,0,220) tip.BackgroundTransparency=1 tip.Font=Enum.Font.Gotham tip.TextSize=9 tip.TextColor3=Color3.fromRGB(140,140,150) tip.TextWrapped=true tip.TextXAlignment=Enum.TextXAlignment.Left tip.TextYAlignment=Enum.TextYAlignment.Top
+        tip.Text="左：位置移动（X/Y/Z）\n中：拉伸（SX/SY/SZ）\n右：旋转（RX/RY/RZ）\nR15下躯干需先点「加上下躯干」才有显示"
+        tip.Parent=box
+        us()
+    end
+
+    mkSec("配件 / 服装（"..#ACC.." 个）",order) order=order+1
+    for _,it in ipairs(ACC) do
+        local row=Instance.new("Frame") row.Size=UDim2.new(1,-6,0,32) row.BackgroundTransparency=1 row.LayoutOrder=order order=order+1 row.Parent=sc
+        local is2D=(it.type=="Shirt" or it.type=="Pants" or it.type=="ShirtGraphic")
+        local sfx="["..it.type.."]"
+        if it.type=="Shirt" then sfx="[2D衬衫]" elseif it.type=="Pants" then sfx="[2D裤]" elseif it.type=="ShirtGraphic" then sfx="[2D T恤]" end
+        local worn=it.isWorn and true or false
+        local on=Instance.new("TextButton") on.Size=UDim2.new(1,-32,1,0) on.BackgroundColor3=worn and Color3.fromRGB(30,100,60) or Color3.fromRGB(40,40,50) on.BorderSizePixel=0 on.Font=Enum.Font.Gotham on.TextSize=10 on.TextColor3=Color3.fromRGB(220,220,230) on.TextXAlignment=Enum.TextXAlignment.Left on.Text=(worn and "  ● " or "  ○ ")..it.name.." "..sfx on.Parent=row
+        Instance.new("UICorner",on).CornerRadius=UDim.new(0,4)
+        local exp=Instance.new("TextButton") exp.Size=UDim2.new(0,28,1,0) exp.Position=UDim2.new(1,-30,0,0) exp.BackgroundColor3=Color3.fromRGB(60,60,80) exp.BorderSizePixel=0 exp.Font=Enum.Font.GothamBold exp.TextSize=12 exp.TextColor3=Color3.new(1,1,1) exp.Text=is2D and "—" or "▼" exp.Parent=row
+        Instance.new("UICorner",exp).CornerRadius=UDim.new(0,4)
+        if not is2D then
+            local pn=Instance.new("Frame") pn.Size=UDim2.new(1,-6,0,190) pn.BackgroundColor3=Color3.fromRGB(25,25,32) pn.BorderSizePixel=0 pn.Visible=false pn.LayoutOrder=order order=order+1 pn.Parent=sc
+            Instance.new("UICorner",pn).CornerRadius=UDim.new(0,4)
+            local st=Instance.new("TextLabel") st.Size=UDim2.new(1,-70,0,16) st.Position=UDim2.new(0,3,0,2) st.BackgroundTransparency=1 st.Font=Enum.Font.Code st.TextSize=9 st.TextColor3=Color3.fromRGB(150,200,150) st.TextXAlignment=Enum.TextXAlignment.Left st.Text="" st.Parent=pn
+            local sl=Instance.new("TextLabel") sl.Size=UDim2.new(0,40,0,16) sl.Position=UDim2.new(1,-128,0,2) sl.BackgroundTransparency=1 sl.Font=Enum.Font.GothamBold sl.TextSize=9 sl.TextColor3=Color3.fromRGB(255,220,100) sl.TextXAlignment=Enum.TextXAlignment.Right sl.Text="步长:" sl.Parent=pn
+            local si=Instance.new("TextBox") si.Size=UDim2.new(0,60,0,18) si.Position=UDim2.new(1,-84,0,1) si.BackgroundColor3=Color3.fromRGB(40,40,55) si.BorderSizePixel=0 si.Font=Enum.Font.Code si.TextSize=10 si.TextColor3=Color3.fromRGB(255,220,100) si.Text=string.format("%.3g",it.step) si.ClearTextOnFocus=false si.Parent=pn
+            Instance.new("UICorner",si).CornerRadius=UDim.new(0,3)
+            si.FocusLost:Connect(function() local v=tonumber(si.Text) if v and v>0 and v<=10 then it.step=v else si.Text=string.format("%.3g",it.step) end end)
+            local function upd() st.Text=string.format("X%+.2f Y%+.2f Z%+.2f | X%.2f Y%.2f Z%.2f | R%+.0f %+.0f %+.0f",it.oX,it.oY,it.oZ,it.sx,it.sy,it.sz,it.rX or 0,it.rY or 0,it.rZ or 0) end
+            upd()
+            local function sm(text,x,y,w,col,cb)
+                local b=Instance.new("TextButton")
+                b.Size=UDim2.new(0,w,0,22) b.Position=UDim2.new(0,x,0,y)
+                b.BackgroundColor3=col or Color3.fromRGB(50,60,80) b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=10 b.TextColor3=Color3.new(1,1,1)
+                b.Text=text b.Parent=pn
+                Instance.new("UICorner",b).CornerRadius=UDim.new(0,3)
+                b.MouseButton1Click:Connect(cb)
+            end
+            sm("X-",3,22,50,nil,function() it.oX=it.oX-it.step upd() end)
+            sm("X+",56,22,50,nil,function() it.oX=it.oX+it.step upd() end)
+            sm("Y-",109,22,50,nil,function() it.oY=it.oY-it.step upd() end)
+            sm("Y+",162,22,50,nil,function() it.oY=it.oY+it.step upd() end)
+            sm("Z-",215,22,50,nil,function() it.oZ=it.oZ-it.step upd() end)
+            sm("Z+",268,22,50,nil,function() it.oZ=it.oZ+it.step upd() end)
+            sm("缩-",3,48,80,Color3.fromRGB(160,100,80),function() it.sx=math.max(0.05,it.sx-it.step) it.sy=math.max(0.05,it.sy-it.step) it.sz=math.max(0.05,it.sz-it.step) upd() rfs(it) end)
+            sm("缩+",85,48,80,Color3.fromRGB(80,140,100),function() it.sx=math.min(10,it.sx+it.step) it.sy=math.min(10,it.sy+it.step) it.sz=math.min(10,it.sz+it.step) upd() rfs(it) end)
+            sm("重置",167,48,60,Color3.fromRGB(100,100,140),function() local d=DOFF[it.type] or {0,0,0} it.oX,it.oY,it.oZ=d[1],d[2],d[3] it.sx,it.sy,it.sz=1,1,1 it.rX,it.rY,it.rZ=0,0,0 upd() rfs(it) end)
+            sm("X-",3,74,50,Color3.fromRGB(180,90,60),function() it.sx=math.max(0.05,it.sx-it.step) upd() rfs(it) end)
+            sm("X+",56,74,50,Color3.fromRGB(60,160,80),function() it.sx=math.min(10,it.sx+it.step) upd() rfs(it) end)
+            sm("Y-",109,74,50,Color3.fromRGB(180,90,60),function() it.sy=math.max(0.05,it.sy-it.step) upd() rfs(it) end)
+            sm("Y+",162,74,50,Color3.fromRGB(60,160,80),function() it.sy=math.min(10,it.sy+it.step) upd() rfs(it) end)
+            sm("Z-",215,74,50,Color3.fromRGB(180,90,60),function() it.sz=math.max(0.05,it.sz-it.step) upd() rfs(it) end)
+            sm("Z+",268,74,50,Color3.fromRGB(60,160,80),function() it.sz=math.min(10,it.sz+it.step) upd() rfs(it) end)
+            sm("RX-",3,100,50,Color3.fromRGB(100,60,160),function() it.rX=(it.rX or 0)-it.step*10 upd() end)
+            sm("RX+",56,100,50,Color3.fromRGB(100,60,160),function() it.rX=(it.rX or 0)+it.step*10 upd() end)
+            sm("RY-",109,100,50,Color3.fromRGB(100,60,160),function() it.rY=(it.rY or 0)-it.step*10 upd() end)
+            sm("RY+",162,100,50,Color3.fromRGB(100,60,160),function() it.rY=(it.rY or 0)+it.step*10 upd() end)
+            sm("RZ-",215,100,50,Color3.fromRGB(100,60,160),function() it.rZ=(it.rZ or 0)-it.step*10 upd() end)
+            sm("RZ+",268,100,50,Color3.fromRGB(100,60,160),function() it.rZ=(it.rZ or 0)+it.step*10 upd() end)
+            local cp=Instance.new("TextButton") cp.Size=UDim2.new(0,120,0,22) cp.Position=UDim2.new(0,3,0,126) cp.BackgroundColor3=Color3.fromRGB(80,80,140) cp.BorderSizePixel=0 cp.Font=Enum.Font.GothamBold cp.TextSize=10 cp.TextColor3=Color3.new(1,1,1) cp.Text="复制参数" cp.Parent=pn
+            Instance.new("UICorner",cp).CornerRadius=UDim.new(0,3)
+            cp.MouseButton1Click:Connect(function() local s=string.format("[%s] X=%.3f Y=%.3f Z=%.3f | sx=%.3f sy=%.3f sz=%.3f",it.name,it.oX,it.oY,it.oZ,it.sx,it.sy,it.sz) print(s) if setclipboard then pcall(function() setclipboard(s) end) end end)
+            local function sb(t,x,v) local b=Instance.new("TextButton") b.Size=UDim2.new(0,50,0,22) b.Position=UDim2.new(0,x,0,126) b.BackgroundColor3=Color3.fromRGB(60,80,60) b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=10 b.TextColor3=Color3.new(1,1,1) b.Text=t b.Parent=pn
+                Instance.new("UICorner",b).CornerRadius=UDim.new(0,3)
+                b.MouseButton1Click:Connect(function() it.step=v si.Text=string.format("%.3g",v) end)
+            end
+            sb("0.01",127,0.01) sb("0.05",179,0.05) sb("0.1",231,0.1) sb("0.5",283,0.5)
+            local ex=false
+            exp.MouseButton1Click:Connect(function() ex=not ex pn.Visible=ex exp.Text=ex and "▲" or "▼" end)
+        end
+        on.MouseButton1Click:Connect(function() if it.handle and it.handle.Parent then unWear(it,on) else wear(it,on) end end)
+    end
+
+    -- ===== 一键清除衣服 + 饰品 =====
+    do
+        local clrBtn = Instance.new("TextButton")
+        clrBtn.Size = UDim2.new(1,-6,0,30)
+        clrBtn.BackgroundColor3 = Color3.fromRGB(180,80,80)
+        clrBtn.BorderSizePixel = 0
+        clrBtn.Font = Enum.Font.GothamBold
+        clrBtn.TextSize = 11
+        clrBtn.TextColor3 = Color3.new(1,1,1)
+        clrBtn.Text = "🧹 清除自己所有衣服 + 饰品"
+        clrBtn.LayoutOrder = order order = order + 1
+        clrBtn.Parent = sc
+        Instance.new("UICorner", clrBtn).CornerRadius = UDim.new(0,4)
+
+        clrBtn.MouseButton1Click:Connect(function()
+            local c = lp.Character
+            if not c then title.Text = "❌ 无角色" return end
+
+            local removed = 0
+
+            -- 1) 2D 服装
+            for _, cls in ipairs({"Shirt","Pants","ShirtGraphic"}) do
+                for _, obj in ipairs(c:GetChildren()) do
+                    if obj:IsA(cls) then
+                        pcall(function() obj:Destroy() end)
+                        removed = removed + 1
+                    end
+                end
+            end
+
+            -- 2) Accessory（帽子、头发、面饰等）
+            for _, obj in ipairs(c:GetChildren()) do
+                if obj:IsA("Accessory") then
+                    pcall(function() obj:Destroy() end)
+                    removed = removed + 1
+                end
+            end
+
+            -- 3) 脚本自己加载的 Item_ 配件 + 状态清理
+            for _, obj in ipairs(c:GetChildren()) do
+                if obj.Name:sub(1,5) == "Item_" then
+                    pcall(function() obj:Destroy() end)
+                    removed = removed + 1
+                end
+            end
+
+            for _, it in ipairs(ACC) do
+                if it.conn then pcall(function() it.conn:Disconnect() end) it.conn = nil end
+                if it.handle and it.handle.Parent then
+                    pcall(function() it.handle:Destroy() end)
+                end
+                it.handle = nil
+                it.isWorn = false
+            end
+
+            title.Text = "✓ 已清除 " .. removed .. " 件衣服/饰品"
+            task.wait(0.05)
+            rebuild()
+        end)
+    end
+
+    mkSec("身体部件（"..#BODY.." 个）",order) order=order+1
+    for _,it in ipairs(BODY) do
+        local b=Instance.new("TextButton") b.Size=UDim2.new(1,-6,0,26) b.BackgroundColor3=Color3.fromRGB(50,50,60) b.BorderSizePixel=0 b.Font=Enum.Font.Gotham b.TextSize=10 b.TextColor3=Color3.fromRGB(220,220,230) b.TextXAlignment=Enum.TextXAlignment.Left
+        local hint=it.mesh and " ✓" or ""
+        b.Text="  ○ "..it.name..hint b.LayoutOrder=order order=order+1 b.Parent=sc
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,4)
+        b.MouseButton1Click:Connect(function()
+            if it.isReplaced then
+                if restoreBody(it) then
+                    b.BackgroundColor3=Color3.fromRGB(50,50,60)
+                    b.Text="  ○ "..it.name..(it.mesh and " ✓" or "")
+                end
+            else
+                if replaceBody(it) then
+                    b.BackgroundColor3=Color3.fromRGB(60,100,60)
+                    b.Text="  ● "..it.name..(it.mesh and " ✓" or "")
+                end
+            end
+        end)
+    end
+
+    mkSec("R15 下躯干（叠加）",order) order=order+1
+
+    local r15b1 = Instance.new("TextButton")
+    r15b1.Size = UDim2.new(1,-6,0,30)
+    r15b1.BackgroundColor3 = r15TorsoApplied and Color3.fromRGB(100,60,180) or Color3.fromRGB(80,80,120)
+    r15b1.BorderSizePixel = 0
+    r15b1.Font = Enum.Font.GothamBold
+    r15b1.TextSize = 11
+    r15b1.TextColor3 = Color3.new(1,1,1)
+    r15b1.Text = r15TorsoApplied and "● 已加下躯干" or "○ 加上下躯干"
+    r15b1.LayoutOrder = order order = order + 1
+    r15b1.Parent = sc
+    Instance.new("UICorner", r15b1).CornerRadius = UDim.new(0,4)
+
+    local r15b2 = Instance.new("TextButton")
+    r15b2.Size = UDim2.new(1,-6,0,30)
+    r15b2.BackgroundColor3 = Color3.fromRGB(120,60,60)
+    r15b2.BorderSizePixel = 0
+    r15b2.Font = Enum.Font.GothamBold
+    r15b2.TextSize = 11
+    r15b2.TextColor3 = Color3.new(1,1,1)
+    r15b2.Text = "恢复原躯干"
+    r15b2.LayoutOrder = order order = order + 1
+    r15b2.Parent = sc
+    Instance.new("UICorner", r15b2).CornerRadius = UDim.new(0,4)
+
+    r15b1.MouseButton1Click:Connect(function()
+        local okApply, msg = applyR15Torso()
+        if okApply then
+            r15b1.BackgroundColor3 = Color3.fromRGB(100,60,180)
+            r15b1.Text = "● 已加下躯干"
+            title.Text = "✓ 已加 R15 下躯干"
+        else
+            title.Text = "❌ " .. tostring(msg or "失败")
+        end
+    end)
+    r15b2.MouseButton1Click:Connect(function()
+        restoreR15Torso()
+        r15b1.BackgroundColor3 = Color3.fromRGB(80,80,120)
+        r15b1.Text = "○ 加上下躯干"
+        title.Text = "已恢复原躯干"
+    end)
+
+    local r15hint = Instance.new("TextLabel")
+    r15hint.Size = UDim2.new(1,-6,0,20)
+    r15hint.BackgroundTransparency = 1
+    r15hint.Font = Enum.Font.Gotham
+    r15hint.TextSize = 9
+    r15hint.TextColor3 = Color3.fromRGB(140,140,150)
+    r15hint.TextXAlignment = Enum.TextXAlignment.Left
+    r15hint.Text = "加好后可在上面「肢体/额外部件」调它的位置尺寸"
+    r15hint.LayoutOrder = order order = order + 1
+    r15hint.Parent = sc
+
+    mkSec("重生设置",order) order=order+1
+    do
+        local row=Instance.new("Frame") row.Size=UDim2.new(1,-6,0,30) row.BackgroundTransparency=1 row.LayoutOrder=order order=order+1 row.Parent=sc
+        local l=Instance.new("TextLabel") l.Size=UDim2.new(0,140,1,0) l.BackgroundTransparency=1 l.Font=Enum.Font.GothamBold l.TextSize=11 l.TextColor3=Color3.fromRGB(200,200,220) l.TextXAlignment=Enum.TextXAlignment.Left l.Text="重生保持外观" l.Parent=row
+        local b=Instance.new("TextButton") b.Size=UDim2.new(0,80,1,0) b.Position=UDim2.new(1,-84,0,0) b.BackgroundColor3=keepRespawn and Color3.fromRGB(60,130,80) or Color3.fromRGB(100,60,60) b.BorderSizePixel=0 b.Font=Enum.Font.GothamBold b.TextSize=11 b.TextColor3=Color3.new(1,1,1) b.Text=keepRespawn and "● 开启" or "○ 关闭" b.Parent=row
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,3)
+        b.MouseButton1Click:Connect(function()
+            keepRespawn=not keepRespawn
+            if keepRespawn then b.BackgroundColor3=Color3.fromRGB(60,130,80) b.Text="● 开启" else b.BackgroundColor3=Color3.fromRGB(100,60,60) b.Text="○ 关闭" end
+        end)
+    end
+    sc.CanvasSize=UDim2.new(0,0,0,order*40+300)
+end
+
+-- ==================== 存档 ====================
+local function listSaveFiles()
+    local out = {}
+    local ok2, files = pcall(listfiles, SAVE_DIR)
+    if ok2 and files then
+        for _, p in ipairs(files) do
+            local name = p:match("([^/\\]+)%.json$")
+            if name then table.insert(out, name) end
+        end
+    end
+    table.sort(out)
+    return out
+end
+
+local function v3ToT(v) if not v then return nil end return {X=v.X,Y=v.Y,Z=v.Z} end
+local function tToV3(t) if not t then return nil end return Vector3.new(tonumber(t.X) or 0, tonumber(t.Y) or 0, tonumber(t.Z) or 0) end
+
+local function collectData()
+    local data = {
+        __ver = 6,
+        __rig = "R6",
+        __dump = dIn.Text,
+        __headScale = headScale,
+        __rW = rW, __rT = rT, __rD = rD,
+        __moveStep = moveStep,
+        __keepRespawn = keepRespawn,
+        __r15Torso = r15TorsoApplied and 1 or 0,
+        __r15UpperMesh = r15UpperMeshId,
+        __r15LowerMesh = r15LowerMeshId,
+        __enabled = {},
+        __accList = {},
+        __ps = {},
+        __po = {},
+        __pr = {},
+        __body = {},
+    }
+    for k, v in pairs(enabledParts) do data.__enabled[k] = v end
+    for _, it in ipairs(ACC) do
+        table.insert(data.__accList, {
+            nm = it.name, t = it.type, m = it.mesh, x = it.tex, u = it.url, nt = it.mount,
+            sz = v3ToT(it.size),
+            oX = it.oX, oY = it.oY, oZ = it.oZ,
+            sX = it.sx, sY = it.sy, sZ = it.sz,
+            rX = it.rX, rY = it.rY, rZ = it.rZ,
+            st = it.step,
+            wr = it.isWorn and 1 or 0,
+        })
+    end
+    for _, n in ipairs(PART_LIST) do
+        data.__ps[n] = v3ToT(partScale[n])
+        data.__po[n] = v3ToT(partOffset[n])
+        data.__pr[n] = v3ToT(partRotation[n])
+    end
+    for _, it in ipairs(BODY) do
+        if it.mesh or it.tex or it.size then
+            data.__body[it.name] = { mesh=it.mesh, tex=it.tex, size=v3ToT(it.size) }
+        end
+    end
+    return data
+end
+
+local function applyData(d)
+    if d.__headScale then headScale = d.__headScale end
+    if d.__rW then rW = d.__rW end
+    if d.__rT then rT = d.__rT end
+    if d.__rD then rD = d.__rD end
+    if d.__moveStep then moveStep = d.__moveStep end
+    if d.__keepRespawn ~= nil then keepRespawn = d.__keepRespawn end
+    if d.__r15UpperMesh then r15UpperMeshId = d.__r15UpperMesh end
+    if d.__r15LowerMesh then r15LowerMeshId = d.__r15LowerMesh end
+    if d.__enabled then for k,v in pairs(d.__enabled) do enabledParts[k]=v end end
+
+    if d.__r15Torso == 1 then
+        task.spawn(function() task.wait(0.3) pcall(applyR15Torso) end)
+    else
+        pcall(restoreR15Torso)
+    end
+
+    local rewornList = {}
+    if d.__accList then
+        for _, it in ipairs(ACC) do
+            if it.conn then it.conn:Disconnect() it.conn=nil end
+            if it.handle then it.handle:Destroy() it.handle=nil end
+            it.isWorn = false
+        end
+        local newACC = {}
+        for _, s in ipairs(d.__accList) do
+            local it = {
+                name = s.nm or "配件",
+                type = s.t, mesh = s.m, tex = s.x, url = s.u,
+                mount = s.nt or (MP[s.t] or "Torso"),
+                size = tToV3(s.sz) or Vector3.new(0,0,0),
+            }
+            initAcc(it)
+            it.oX,it.oY,it.oZ = s.oX or 0, s.oY or 0, s.oZ or 0
+            it.sx,it.sy,it.sz = s.sX or 1, s.sY or 1, s.sZ or 1
+            it.rX,it.rY,it.rZ = s.rX or 0, s.rY or 0, s.rZ or 0
+            it.step = s.st or 0.1
+            if s.wr == 1 then table.insert(rewornList, it) end
+            table.insert(newACC, it)
+        end
+        ACC = newACC
+    end
+
+    for _, n in ipairs(PART_LIST) do
+        if d.__ps and d.__ps[n] then partScale[n] = tToV3(d.__ps[n]) or Vector3.new(1,1,1) end
+        if d.__po and d.__po[n] then partOffset[n] = tToV3(d.__po[n]) or Vector3.new(0,0,0) end
+        if d.__pr and d.__pr[n] then partRotation[n] = tToV3(d.__pr[n]) or Vector3.new(0,0,0) end
+    end
+
+    if d.__body then
+        for _, it in ipairs(BODY) do
+            local s = d.__body[it.name]
+            if s then
+                it.mesh = s.mesh it.tex = s.tex it.size = tToV3(s.size)
+            else
+                it.mesh, it.tex, it.size = nil, nil, nil
+            end
+            it.isReplaced = false
+            it.originalMesh = nil
+        end
+        dumpSize = {}
+        for _, it in ipairs(BODY) do
+            if it.size then dumpSize[it.part] = it.size end
+        end
+    end
+
+    if d.__dump and type(d.__dump) == "string" then dIn.Text = d.__dump end
+
+    applyScale()
+    rebuild()
+
+    if #rewornList > 0 then
+        task.spawn(function()
+            task.wait(0.4)
+            for _, it in ipairs(rewornList) do pcall(wear, it, nil) end
+            pcall(applyScale)
+            pcall(rebuild)
+        end)
+    end
+end
+
+_showSave = function()
+    local files = listSaveFiles()
+    local defaultName = "Save1"
+    local i = 1
+    while true do
+        local found = false
+        for _, n in ipairs(files) do if n == "Save"..i then found = true break end end
+        if not found then defaultName = "Save"..i break end
+        i = i + 1
+    end
+
+    local dlg = Instance.new("Frame")
+    dlg.Size = UDim2.new(0, 320, 0, 180)
+    dlg.Position = UDim2.new(0.5, -160, 0.5, -90)
+    dlg.BackgroundColor3 = Color3.fromRGB(20,20,30)
+    dlg.BorderSizePixel = 0
+    dlg.Active = true
+    dlg.Draggable = true
+    dlg.Parent = g
+    Instance.new("UICorner", dlg).CornerRadius = UDim.new(0, 8)
+    local ds = Instance.new("UIStroke") ds.Color = Color3.fromRGB(0,220,140) ds.Parent = dlg
+
+    local ti = Instance.new("TextLabel")
+    ti.Size = UDim2.new(1,-10,0,24)
+    ti.Position = UDim2.new(0,10,0,5)
+    ti.BackgroundTransparency = 1
+    ti.Font = Enum.Font.GothamBold
+    ti.TextSize = 12
+    ti.TextColor3 = Color3.fromRGB(0,230,140)
+    ti.TextXAlignment = Enum.TextXAlignment.Left
+    ti.Text = "保存为 R6 存档"
+    ti.Parent = dlg
+
+    local info = Instance.new("TextLabel")
+    info.Size = UDim2.new(1,-20,0,16)
+    info.Position = UDim2.new(0,10,0,30)
+    info.BackgroundTransparency = 1
+    info.Font = Enum.Font.Gotham
+    info.TextSize = 10
+    info.TextColor3 = Color3.fromRGB(140,140,155)
+    info.TextXAlignment = Enum.TextXAlignment.Left
+    info.Text = string.format("配件 %d 个（穿戴 %d）| R15下躯干 %s", #ACC, (function() local c=0 for _,it in ipairs(ACC) do if it.isWorn then c=c+1 end end return c end)(), r15TorsoApplied and "开" or "关")
+    info.Parent = dlg
+
+    local input = Instance.new("TextBox")
+    input.Size = UDim2.new(1,-20,0,30)
+    input.Position = UDim2.new(0,10,0,52)
+    input.BackgroundColor3 = Color3.fromRGB(30,30,45)
+    input.BorderSizePixel = 0
+    input.Font = Enum.Font.Code
+    input.TextSize = 13
+    input.TextColor3 = Color3.fromRGB(220,255,220)
+    input.Text = defaultName
+    input.ClearTextOnFocus = false
+    input.Parent = dlg
+    Instance.new("UICorner", input).CornerRadius = UDim.new(0, 5)
+
+    local okBtn = Instance.new("TextButton")
+    okBtn.Size = UDim2.new(0, 140, 0, 30)
+    okBtn.Position = UDim2.new(0, 10, 0, 135)
+    okBtn.BackgroundColor3 = Color3.fromRGB(0,110,70)
+    okBtn.BorderSizePixel = 0
+    okBtn.Font = Enum.Font.GothamBold
+    okBtn.TextSize = 12
+    okBtn.TextColor3 = Color3.new(1,1,1)
+    okBtn.Text = "保存"
+    okBtn.Parent = dlg
+    Instance.new("UICorner", okBtn).CornerRadius = UDim.new(0, 5)
+
+    local cancelBtn = Instance.new("TextButton")
+    cancelBtn.Size = UDim2.new(0, 140, 0, 30)
+    cancelBtn.Position = UDim2.new(1, -150, 0, 135)
+    cancelBtn.BackgroundColor3 = Color3.fromRGB(80,40,40)
+    cancelBtn.BorderSizePixel = 0
+    cancelBtn.Font = Enum.Font.GothamBold
+    cancelBtn.TextSize = 12
+    cancelBtn.TextColor3 = Color3.new(1,1,1)
+    cancelBtn.Text = "取消"
+    cancelBtn.Parent = dlg
+    Instance.new("UICorner", cancelBtn).CornerRadius = UDim.new(0, 5)
+
+    okBtn.MouseButton1Click:Connect(function()
+        local name = input.Text:gsub("^%s+",""):gsub("%s+$","")
+        if name == "" then title.Text = "❌ 名字为空" return end
+        local data = collectData()
+        local okj, js = pcall(function() return HS:JSONEncode(data) end)
+        if not okj or not js then title.Text = "❌ 编码失败: "..tostring(js) return end
+        local path = SAVE_DIR .. "/" .. name .. ".json"
+        local okw, errw = pcall(writefile, path, js)
+        if not okw then title.Text = "❌ 写入失败: " .. tostring(errw) return end
+        title.Text = "✓ 已保存 ["..name.."] "..#ACC.."配件"
+        dlg:Destroy()
+    end)
+    cancelBtn.MouseButton1Click:Connect(function() dlg:Destroy() end)
+end
+
+_showLoad = function()
+    local function refresh()
+        for _, ch in ipairs(g:GetChildren()) do
+            if ch:GetAttribute("IsSaveList") then ch:Destroy() end
+        end
+        local files = listSaveFiles()
+
+        local dlg = Instance.new("Frame")
+        dlg:SetAttribute("IsSaveList", true)
+        dlg.Size = UDim2.new(0, 320, 0, 380)
+        dlg.Position = UDim2.new(0.5, -160, 0.5, -190)
+        dlg.BackgroundColor3 = Color3.fromRGB(20,20,30)
+        dlg.BorderSizePixel = 0
+        dlg.Active = true
+        dlg.Draggable = true
+        dlg.Parent = g
+        Instance.new("UICorner", dlg).CornerRadius = UDim.new(0, 8)
+        local ds = Instance.new("UIStroke") ds.Color = Color3.fromRGB(0,220,140) ds.Parent = dlg
+
+        local ti = Instance.new("TextLabel")
+        ti.Size = UDim2.new(1,-40,0,24)
+        ti.Position = UDim2.new(0,10,0,5)
+        ti.BackgroundTransparency = 1
+        ti.Font = Enum.Font.GothamBold
+        ti.TextSize = 12
+        ti.TextColor3 = Color3.fromRGB(0,230,140)
+        ti.TextXAlignment = Enum.TextXAlignment.Left
+        ti.Text = "读取 R6 存档 (" .. #files .. ")"
+        ti.Parent = dlg
+
+        local xBtn = Instance.new("TextButton")
+        xBtn.Size = UDim2.new(0, 24, 0, 24)
+        xBtn.Position = UDim2.new(1, -28, 0, 5)
+        xBtn.BackgroundColor3 = Color3.fromRGB(80,30,30)
+        xBtn.BorderSizePixel = 0
+        xBtn.Font = Enum.Font.GothamBold
+        xBtn.TextSize = 14
+        xBtn.TextColor3 = Color3.fromRGB(255,150,150)
+        xBtn.Text = "×"
+        xBtn.Parent = dlg
+        Instance.new("UICorner", xBtn).CornerRadius = UDim.new(0, 4)
+        xBtn.MouseButton1Click:Connect(function() dlg:Destroy() end)
+
+        local ls = Instance.new("ScrollingFrame")
+        ls.Size = UDim2.new(1,-20,1,-42)
+        ls.Position = UDim2.new(0,10,0,34)
+        ls.BackgroundColor3 = Color3.fromRGB(10,10,14)
+        ls.BorderSizePixel = 0
+        ls.ScrollBarThickness = 4
+        ls.CanvasSize = UDim2.new(0,0,0,0)
+        ls.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        ls.Parent = dlg
+        Instance.new("UICorner", ls).CornerRadius = UDim.new(0, 5)
+
+        local ll = Instance.new("UIListLayout") ll.Padding = UDim.new(0,4) ll.Parent = ls
+
+        if #files == 0 then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1,-10,0,40)
+            empty.BackgroundTransparency = 1
+            empty.Font = Enum.Font.Gotham
+            empty.TextSize = 11
+            empty.TextColor3 = Color3.fromRGB(140,140,150)
+            empty.Text = "暂无存档，先点「保存」"
+            empty.Parent = ls
+            return
+        end
+
+        for _, name in ipairs(files) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1,-10,0,32)
+            b.BackgroundColor3 = Color3.fromRGB(40,40,55)
+            b.BorderSizePixel = 0
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 11
+            b.TextColor3 = Color3.fromRGB(220,220,235)
+            b.TextXAlignment = Enum.TextXAlignment.Left
+            b.Text = "  ▸ " .. name
+            b.Parent = ls
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+
+            local delBtn = Instance.new("TextButton")
+            delBtn.Size = UDim2.new(0, 26, 1, 0)
+            delBtn.Position = UDim2.new(1, -30, 0, 0)
+            delBtn.BackgroundColor3 = Color3.fromRGB(80,30,30)
+            delBtn.BorderSizePixel = 0
+            delBtn.Font = Enum.Font.GothamBold
+            delBtn.TextSize = 12
+            delBtn.TextColor3 = Color3.fromRGB(255,150,150)
+            delBtn.Text = "×"
+            delBtn.Parent = b
+            Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 4)
+
+            delBtn.MouseButton1Click:Connect(function()
+                local path = SAVE_DIR .. "/" .. name .. ".json"
+                pcall(delfile, path)
+                title.Text = "已删除 [" .. name .. "]"
+                dlg:Destroy()
+                refresh()
+            end)
+
+            b.MouseButton1Click:Connect(function()
+                local path = SAVE_DIR .. "/" .. name .. ".json"
+                local okr, c = pcall(readfile, path)
+                if not okr or not c then title.Text = "❌ 读取失败" return end
+                local okd, d = pcall(function() return HS:JSONDecode(c) end)
+                if not okd or not d then title.Text = "❌ 解析失败" return end
+                applyData(d)
+                title.Text = "✓ 已读取 [" .. name .. "] 配件"..#ACC
+                dlg:Destroy()
+            end)
+        end
+    end
+    refresh()
+end
+
+-- ==================== 事件 ====================
+pB.MouseButton1Click:Connect(function()
+    local text=dIn.Text
+    if not text or #text<10 then title.Text="请输入dump" return end
+    local pA,pB2=parseDump(text)
+    local bc=0 for _ in pairs(pB2) do bc=bc+1 end
+    if #pA==0 and bc==0 then title.Text="❌ 无内容" return end
+    rec2D()
+    for _,it in ipairs(ACC) do
+        if it.conn then it.conn:Disconnect() it.conn=nil end
+        if it.handle then it.handle:Destroy() it.handle=nil end
+        it.isWorn=false
+    end
+    ACC=pA
+    for _,bIt in ipairs(BODY) do
+        if pB2[bIt.name] then
+            bIt.mesh=pB2[bIt.name].mesh
+            bIt.tex=pB2[bIt.name].tex
+            bIt.size=pB2[bIt.name].size
+        end
+    end
+    dumpSize={}
+    for _,bIt in ipairs(BODY) do if bIt.size then dumpSize[bIt.part]=bIt.size end end
+    rebuild()
+    local c2=0
+    for _,it in ipairs(pA) do
+        if it.type=="Shirt" or it.type=="Pants" or it.type=="ShirtGraphic" then c2=c2+1 end
+    end
+    local r15info = ""
+    if pB2.LowerTorso and pB2.LowerTorso.mesh then r15info = r15info .. " LT✓" end
+    title.Text=string.format("✓ R6 配件%d (2D:%d) 身体%d%s",#pA,c2,bc,r15info)
+end)
+
+rB.MouseButton1Click:Connect(function()
+    for _,it in ipairs(ACC) do
+        if it.conn then it.conn:Disconnect() it.conn=nil end
+        if it.handle then it.handle:Destroy() it.handle=nil end
+        it.isWorn=false
+    end
+    ACC={}
+    for _,bIt in ipairs(BODY) do bIt.mesh=nil bIt.tex=nil bIt.size=nil end
+    dumpSize={}
+    rebuild() title.Text="已清空"
+end)
+
+lp.CharacterAdded:Connect(function(newChar)
+    if not keepRespawn then return end
+    task.wait(0.8)
+    pcall(function()
+        saveBase()
+        if r15TorsoApplied then
+            task.wait(0.2)
+            pcall(applyR15Torso)
+        end
+        for _,it in ipairs(ACC) do
+            if it.isWorn and it.url then
+                if it.type=="Shirt" then local s=newChar:FindFirstChildOfClass("Shirt") if not s then s=Instance.new("Shirt") s.Parent=newChar end s.ShirtTemplate=it.url it.handle=s
+                elseif it.type=="Pants" then local p=newChar:FindFirstChildOfClass("Pants") if not p then p=Instance.new("Pants") p.Parent=newChar end p.PantsTemplate=it.url it.handle=p
+                elseif it.type=="ShirtGraphic" then local g2=newChar:FindFirstChildOfClass("ShirtGraphic") if not g2 then g2=Instance.new("ShirtGraphic") g2.Parent=newChar end g2.Graphic=it.url it.handle=g2
+                else it.handle=nil it.conn=nil wear(it,nil) end
+            end
+        end
+        for name,_ in pairs(dumpSize) do
+            local part=newChar:FindFirstChild(name)
+            if part then
+                for _,it in ipairs(BODY) do
+                    if it.part==name then
+                        if it.mesh then
+                            if part:IsA("MeshPart") then pcall(function() part.MeshId=it.mesh end)
+                            else
+                                local sm=part:FindFirstChildOfClass("SpecialMesh")
+                                if not sm then sm=Instance.new("SpecialMesh") sm.Parent=part end
+                                pcall(function() sm.MeshId=it.mesh end)
+                            end
+                        end
+                        if it.tex then
+                            if part:IsA("MeshPart") then pcall(function() part.TextureID=it.tex end)
+                            else
+                                local sm=part:FindFirstChildOfClass("SpecialMesh")
+                                if not sm then sm=Instance.new("SpecialMesh") sm.Parent=part end
+                                pcall(function() sm.TextureId=it.tex end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        applyScale()
+        title.Text="✓ 已恢复"
+    end)
+end)
+
+task.spawn(function()
+    task.wait(0.5) saveBase() rec2D()
+    local c=lp.Character
+    if c then c.ChildAdded:Connect(function() task.wait(0.3) saveBase() rec2D() end) end
+end)
+
+rebuild()
+title.Text="🎩 R6 拖我"
+end)
+
+if not ok then
+    local eg=Instance.new("ScreenGui")
+    eg.Name="CesiR6_Error"
+    eg.ResetOnSpawn=false
+    eg.DisplayOrder=99999
+    eg.Parent=game.Players.LocalPlayer:WaitForChild("PlayerGui")
+    local t=Instance.new("TextLabel")
+    t.Size=UDim2.new(0.95,0,0.5,0)
+    t.Position=UDim2.new(0.025,0,0.25,0)
+    t.BackgroundColor3=Color3.fromRGB(40,0,0)
+    t.TextColor3=Color3.fromRGB(255,100,100)
+    t.TextSize=11
+    t.Font=Enum.Font.Code
+    t.TextWrapped=true
+    t.TextXAlignment=Enum.TextXAlignment.Left
+    t.TextYAlignment=Enum.TextYAlignment.Top
+    t.Text="❌ R6 加载失败:\n"..tostring(err)
+    t.Parent=eg
+end
