@@ -1,0 +1,571 @@
+local lp=game.Players.LocalPlayer
+local HS=game:GetService("HttpService")
+local SAVE_DIR="AnimSaves"
+if not isfolder(SAVE_DIR) then makefolder(SAVE_DIR) end
+
+local function collect()
+    local t,seen={},{}
+    local function add(r)
+        if not r then return end
+        for _,o in ipairs(r:GetDescendants()) do
+            if o:IsA("Animation") and not seen[o] then
+                seen[o]=true; table.insert(t,o)
+            end
+        end
+    end
+    add(lp.Character); add(lp:FindFirstChild("PlayerScripts"))
+    return t
+end
+
+local function refresh()
+    local c=lp.Character
+    if not c then return end
+    local h=c:FindFirstChildOfClass("Humanoid")
+    local a=h and h:FindFirstChildOfClass("Animator")
+    if a then pcall(function() for _,t in ipairs(a:GetPlayingAnimationTracks()) do t:Stop(0) end end) end
+    local an=c:FindFirstChild("Animate")
+    if an and an:IsA("BaseScript") then an.Disabled=true task.wait(0.05) an.Disabled=false end
+end
+
+local function slots()
+    local s={}
+    for _,a in ipairs(collect()) do
+        local pn=a.Parent and a.Parent.Name or "?"
+        local k=pn.."/"..a.Name
+        if not s[k] then s[k]=tostring(a.AnimationId):match("%d+") or "" end
+    end
+    return s
+end
+
+local function apply(s)
+    local n=0
+    for _,a in ipairs(collect()) do
+        local pn=a.Parent and a.Parent.Name or "?"
+        local k=pn.."/"..a.Name
+        if s[k] and s[k]~="" then
+            local tgt="rbxassetid://"..s[k]
+            if a.AnimationId~=tgt then pcall(function() a.AnimationId=tgt end) n=n+1 end
+        end
+    end
+    refresh()
+    return n
+end
+
+local function listSaves()
+    local o={}
+    local ok,f=pcall(listfiles,SAVE_DIR)
+    if ok and f then for _,p in ipairs(f) do local n=p:match("([^/\\]+)%.json$") if n then table.insert(o,n) end end end
+    table.sort(o)
+    return o
+end
+
+-- UI
+local g=Instance.new("ScreenGui")
+g.Name="AnimEditor"
+g.ResetOnSpawn=false
+g.DisplayOrder=10001
+g.Parent=lp:WaitForChild("PlayerGui")
+
+local win=Instance.new("Frame")
+win.Size=UDim2.new(0,400,0,480)
+win.Position=UDim2.new(0.5,-200,0.5,-240)
+win.BackgroundColor3=Color3.fromRGB(20,20,28)
+win.BorderSizePixel=0
+win.Active=true
+win.Draggable=true
+win.Parent=g
+Instance.new("UICorner",win).CornerRadius=UDim.new(0,8)
+
+local title=Instance.new("TextLabel")
+title.Size=UDim2.new(1,-40,0,24)
+title.Position=UDim2.new(0,8,0,4)
+title.BackgroundTransparency=1
+title.Font=Enum.Font.GothamBold
+title.TextSize=12
+title.TextColor3=Color3.fromRGB(0,255,140)
+title.TextXAlignment=Enum.TextXAlignment.Left
+title.Text="🎬 动画编辑器"
+title.Parent=win
+
+local close=Instance.new("TextButton")
+close.Size=UDim2.new(0,22,0,22)
+close.Position=UDim2.new(1,-28,0,4)
+close.BackgroundColor3=Color3.fromRGB(160,60,60)
+close.BorderSizePixel=0
+close.Font=Enum.Font.GothamBold
+close.TextSize=13
+close.TextColor3=Color3.new(1,1,1)
+close.Text="×"
+close.Parent=win
+Instance.new("UICorner",close).CornerRadius=UDim.new(0,4)
+close.MouseButton1Click:Connect(function() g:Destroy() end)
+
+local info=Instance.new("TextLabel")
+info.Size=UDim2.new(1,-16,0,18)
+info.Position=UDim2.new(0,8,0,30)
+info.BackgroundTransparency=1
+info.Font=Enum.Font.Gotham
+info.TextSize=10
+info.TextColor3=Color3.fromRGB(150,150,160)
+info.TextXAlignment=Enum.TextXAlignment.Left
+info.Text="扫描中..."
+info.Parent=win
+
+local function mkBtn(t,x,y,w,col,cb)
+    local b=Instance.new("TextButton")
+    b.Size=UDim2.new(0,w,0,24)
+    b.Position=UDim2.new(0,x,0,y)
+    b.BackgroundColor3=col
+    b.BorderSizePixel=0
+    b.Font=Enum.Font.GothamBold
+    b.TextSize=10
+    b.TextColor3=Color3.new(1,1,1)
+    b.Text=t
+    b.Parent=win
+    Instance.new("UICorner",b).CornerRadius=UDim.new(0,4)
+    b.MouseButton1Click:Connect(cb)
+    return b
+end
+
+mkBtn("重扫描",8,52,90,Color3.fromRGB(80,100,170),function()
+    rebuild()
+    info.Text="已重扫描"
+end)
+mkBtn("★ 一键R15",104,52,110,Color3.fromRGB(200,140,50),function()
+    local map={
+        ["idle/Animation1"]="507766666", ["idle/Animation2"]="507766951",
+        ["walk/WalkAnim"]="507777826", ["run/RunAnim"]="507767714",
+        ["jump/JumpAnim"]="507765000", ["fall/FallAnim"]="507767968",
+        ["climb/ClimbAnim"]="507765644", ["swim/Swim"]="507784897",
+        ["swim/SwimIdle"]="507785072", ["swimidle/SwimIdle"]="507785072",
+        ["sit/SitAnim"]="2506281703", ["toolnone/ToolNoneAnim"]="507768375",
+        ["toolslash/ToolSlashAnim"]="507768133", ["toollunge/ToolLungeAnim"]="522635514",
+        ["wave/WaveAnim"]="507770239", ["point/PointAnim"]="507770453",
+        ["dance/DanceAnim"]="507771019", ["laugh/LaughAnim"]="507770818",
+        ["cheer/CheerAnim"]="507770677",
+    }
+    local n=apply(map)
+    rebuild()
+    info.Text="R15 已应用 "..n.." 处"
+end)
+mkBtn("全部应用",220,52,90,Color3.fromRGB(60,140,80),function()
+    local s={}
+    for _,r in ipairs(rows) do
+        local v=r.box.Text:gsub("%D","")
+        if v~="" then s[r.slot]=v end
+    end
+    local n=apply(s)
+    info.Text="全部应用 "..n.." 处"
+end)
+mkBtn("✕ 清空",316,52,76,Color3.fromRGB(140,60,60),function()
+    for _,r in ipairs(rows) do r.box.Text="" end
+    info.Text="已清空输入框"
+end)
+
+mkBtn("💾 保存",8,82,90,Color3.fromRGB(60,130,80),function()
+    local name="Anim1"
+    local i=1
+    local ex=listSaves()
+    while true do
+        local has=false
+        for _,n in ipairs(ex) do if n==name then has=true break end end
+        if not has then break end
+        i=i+1 name="Anim"..i
+    end
+    local box=promptSaveName(name)
+    if box then
+        local s=slots()
+        local data={__ver=1,__time=os.time(),__slots=s}
+        local okj,js=pcall(function() return HS:JSONEncode(data) end)
+        if not okj or not js then info.Text="❌ 编码失败" return end
+        local okw,errw=pcall(writefile,SAVE_DIR.."/"..box..".json",js)
+        if not okw then info.Text="❌ 写入失败: "..tostring(errw) return end
+        local n=0 for _ in pairs(s) do n=n+1 end
+        info.Text=string.format("✓ 已保存 [%s] %d 条",box,n)
+    end
+end)
+mkBtn("📂 读取",104,82,90,Color3.fromRGB(80,100,170),function()
+    showLoadList()
+end)
+mkBtn("🗑 存档",200,82,90,Color3.fromRGB(140,60,60),function()
+    showDelList()
+end)
+mkBtn("刷新列表",296,82,96,Color3.fromRGB(80,80,110),function()
+    rebuild()
+end)
+
+local sc=Instance.new("ScrollingFrame")
+sc.Size=UDim2.new(1,-16,1,-120)
+sc.Position=UDim2.new(0,8,0,112)
+sc.BackgroundColor3=Color3.fromRGB(10,10,14)
+sc.BorderSizePixel=0
+sc.ScrollBarThickness=5
+sc.CanvasSize=UDim2.new(0,0,0,0)
+sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
+sc.Parent=win
+Instance.new("UICorner",sc).CornerRadius=UDim.new(0,4)
+local ll=Instance.new("UIListLayout")
+ll.Padding=UDim.new(0,3)
+ll.Parent=sc
+
+rows={}
+function rebuild()
+    for _,ch in ipairs(sc:GetChildren()) do
+        if ch:IsA("Frame") then ch:Destroy() end
+    end
+    rows={}
+    local s=slots()
+    local names={}
+    for k in pairs(s) do table.insert(names,k) end
+    table.sort(names)
+    if #names==0 then
+        local e=Instance.new("TextLabel")
+        e.Size=UDim2.new(1,-10,0,40)
+        e.BackgroundTransparency=1
+        e.Font=Enum.Font.Gotham
+        e.TextSize=11
+        e.TextColor3=Color3.fromRGB(220,180,180)
+        e.Text="没找到任何 Animation 对象"
+        e.Parent=sc
+        info.Text="0 个对象"
+        return
+    end
+    for _,slot in ipairs(names) do
+        local row=Instance.new("Frame")
+        row.Size=UDim2.new(1,-6,0,28)
+        row.BackgroundColor3=Color3.fromRGB(30,30,40)
+        row.BorderSizePixel=0
+        row.Parent=sc
+        Instance.new("UICorner",row).CornerRadius=UDim.new(0,4)
+
+        local lab=Instance.new("TextLabel")
+        lab.Size=UDim2.new(0,140,1,0)
+        lab.Position=UDim2.new(0,4,0,0)
+        lab.BackgroundTransparency=1
+        lab.Font=Enum.Font.Code
+        lab.TextSize=9
+        lab.TextColor3=Color3.fromRGB(255,220,100)
+        lab.TextXAlignment=Enum.TextXAlignment.Left
+        lab.Text=slot
+        lab.Parent=row
+
+        local box=Instance.new("TextBox")
+        box.Size=UDim2.new(1,-232,1,-6)
+        box.Position=UDim2.new(0,148,0,3)
+        box.BackgroundColor3=Color3.fromRGB(15,15,22)
+        box.BorderSizePixel=0
+        box.Font=Enum.Font.Code
+        box.TextSize=10
+        box.TextColor3=Color3.fromRGB(180,255,180)
+        box.TextXAlignment=Enum.TextXAlignment.Left
+        box.ClearTextOnFocus=false
+        box.Text=s[slot]
+        box.Parent=row
+        Instance.new("UICorner",box).CornerRadius=UDim.new(0,3)
+
+        local ap=Instance.new("TextButton")
+        ap.Size=UDim2.new(0,76,1,-6)
+        ap.Position=UDim2.new(1,-80,0,3)
+        ap.BackgroundColor3=Color3.fromRGB(60,120,170)
+        ap.BorderSizePixel=0
+        ap.Font=Enum.Font.GothamBold
+        ap.TextSize=10
+        ap.TextColor3=Color3.new(1,1,1)
+        ap.Text="应用"
+        ap.Parent=row
+        Instance.new("UICorner",ap).CornerRadius=UDim.new(0,3)
+
+        ap.MouseButton1Click:Connect(function()
+            local v=box.Text:gsub("%D","")
+            if v=="" then info.Text="ID 无效" return end
+            local pn,an=slot:match("^([^/]+)/(.+)$")
+            local tgt="rbxassetid://"..v
+            local n=0
+            for _,a in ipairs(collect()) do
+                local ap2=a.Parent and a.Parent.Name or "?"
+                if ap2==pn and a.Name==an then
+                    if a.AnimationId~=tgt then pcall(function() a.AnimationId=tgt end) n=n+1 end
+                end
+            end
+            refresh()
+            info.Text=string.format("[%s] → %s (%d处)",slot,v,n)
+        end)
+        table.insert(rows,{slot=slot,box=box})
+    end
+    info.Text="找到 "..#names.." 条"
+end
+
+-- 保存对话框（输入名字）
+function promptSaveName(default)
+    local dlg=Instance.new("Frame")
+    dlg.Size=UDim2.new(0,300,0,130)
+    dlg.Position=UDim2.new(0.5,-150,0.5,-65)
+    dlg.BackgroundColor3=Color3.fromRGB(25,25,35)
+    dlg.BorderSizePixel=0
+    dlg.Draggable=true
+    dlg.Parent=g
+    Instance.new("UICorner",dlg).CornerRadius=UDim.new(0,8)
+    local s=Instance.new("UIStroke")
+    s.Color=Color3.fromRGB(0,220,140)
+    s.Parent=dlg
+
+    local t=Instance.new("TextLabel")
+    t.Size=UDim2.new(1,-16,0,22)
+    t.Position=UDim2.new(0,8,0,6)
+    t.BackgroundTransparency=1
+    t.Font=Enum.Font.GothamBold
+    t.TextSize=12
+    t.TextColor3=Color3.fromRGB(0,230,140)
+    t.TextXAlignment=Enum.TextXAlignment.Left
+    t.Text="保存动画存档"
+    t.Parent=dlg
+
+    local box=Instance.new("TextBox")
+    box.Size=UDim2.new(1,-16,0,30)
+    box.Position=UDim2.new(0,8,0,36)
+    box.BackgroundColor3=Color3.fromRGB(15,15,22)
+    box.BorderSizePixel=0
+    box.Font=Enum.Font.Code
+    box.TextSize=13
+    box.TextColor3=Color3.fromRGB(220,255,220)
+    box.Text=default
+    box.ClearTextOnFocus=false
+    box.Parent=dlg
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,4)
+
+    local ok=Instance.new("TextButton")
+    ok.Size=UDim2.new(0,130,0,30)
+    ok.Position=UDim2.new(0,8,0,88)
+    ok.BackgroundColor3=Color3.fromRGB(0,110,70)
+    ok.BorderSizePixel=0
+    ok.Font=Enum.Font.GothamBold
+    ok.TextSize=12
+    ok.TextColor3=Color3.new(1,1,1)
+    ok.Text="保存"
+    ok.Parent=dlg
+    Instance.new("UICorner",ok).CornerRadius=UDim.new(0,5)
+
+    local cc=Instance.new("TextButton")
+    cc.Size=UDim2.new(0,130,0,30)
+    cc.Position=UDim2.new(1,-138,0,88)
+    cc.BackgroundColor3=Color3.fromRGB(80,40,40)
+    cc.BorderSizePixel=0
+    cc.Font=Enum.Font.GothamBold
+    cc.TextSize=12
+    cc.TextColor3=Color3.new(1,1,1)
+    cc.Text="取消"
+    cc.Parent=dlg
+    Instance.new("UICorner",cc).CornerRadius=UDim.new(0,5)
+
+    local result=nil
+    local done=false
+    ok.MouseButton1Click:Connect(function()
+        local n=box.Text:gsub("^%s+",""):gsub("%s+$","")
+        if n~="" then result=n end
+        done=true
+        dlg:Destroy()
+    end)
+    cc.MouseButton1Click:Connect(function()
+        done=true
+        dlg:Destroy()
+    end)
+    while not done do task.wait(0.05) end
+    return result
+end
+
+-- 读取存档列表
+function showLoadList()
+    for _,ch in ipairs(g:GetChildren()) do
+        if ch:GetAttribute("Dlg") then ch:Destroy() end
+    end
+    local function refresh2()
+        for _,ch in ipairs(g:GetChildren()) do
+            if ch:GetAttribute("Dlg") then ch:Destroy() end
+        end
+        local files=listSaves()
+        local dlg=Instance.new("Frame")
+        dlg:SetAttribute("Dlg",true)
+        dlg.Size=UDim2.new(0,300,0,340)
+        dlg.Position=UDim2.new(0.5,-150,0.5,-170)
+        dlg.BackgroundColor3=Color3.fromRGB(25,25,35)
+        dlg.BorderSizePixel=0
+        dlg.Draggable=true
+        dlg.Parent=g
+        Instance.new("UICorner",dlg).CornerRadius=UDim.new(0,8)
+        local s=Instance.new("UIStroke")
+        s.Color=Color3.fromRGB(0,220,140)
+        s.Parent=dlg
+
+        local t=Instance.new("TextLabel")
+        t.Size=UDim2.new(1,-40,0,24)
+        t.Position=UDim2.new(0,10,0,5)
+        t.BackgroundTransparency=1
+        t.Font=Enum.Font.GothamBold
+        t.TextSize=12
+        t.TextColor3=Color3.fromRGB(0,230,140)
+        t.TextXAlignment=Enum.TextXAlignment.Left
+        t.Text="读取存档 ("..#files..")"
+        t.Parent=dlg
+
+        local xb=Instance.new("TextButton")
+        xb.Size=UDim2.new(0,24,0,24)
+        xb.Position=UDim2.new(1,-28,0,5)
+        xb.BackgroundColor3=Color3.fromRGB(80,30,30)
+        xb.BorderSizePixel=0
+        xb.Font=Enum.Font.GothamBold
+        xb.TextSize=14
+        xb.TextColor3=Color3.fromRGB(255,150,150)
+        xb.Text="×"
+        xb.Parent=dlg
+        Instance.new("UICorner",xb).CornerRadius=UDim.new(0,4)
+        xb.MouseButton1Click:Connect(function() dlg:Destroy() end)
+
+        local ls=Instance.new("ScrollingFrame")
+        ls.Size=UDim2.new(1,-20,1,-42)
+        ls.Position=UDim2.new(0,10,0,34)
+        ls.BackgroundColor3=Color3.fromRGB(10,10,14)
+        ls.BorderSizePixel=0
+        ls.ScrollBarThickness=4
+        ls.CanvasSize=UDim2.new(0,0,0,0)
+        ls.AutomaticCanvasSize=Enum.AutomaticSize.Y
+        ls.Parent=dlg
+        Instance.new("UICorner",ls).CornerRadius=UDim.new(0,5)
+        local l2=Instance.new("UIListLayout")
+        l2.Padding=UDim.new(0,4)
+        l2.Parent=ls
+
+        if #files==0 then
+            local e=Instance.new("TextLabel")
+            e.Size=UDim2.new(1,-10,0,40)
+            e.BackgroundTransparency=1
+            e.Font=Enum.Font.Gotham
+            e.TextSize=11
+            e.TextColor3=Color3.fromRGB(140,140,150)
+            e.Text="暂无存档"
+            e.Parent=ls
+            return
+        end
+
+        for _,name in ipairs(files) do
+            local b=Instance.new("TextButton")
+            b.Size=UDim2.new(1,-10,0,34)
+            b.BackgroundColor3=Color3.fromRGB(40,40,55)
+            b.BorderSizePixel=0
+            b.Font=Enum.Font.GothamBold
+            b.TextSize=11
+            b.TextColor3=Color3.fromRGB(220,220,235)
+            b.TextXAlignment=Enum.TextXAlignment.Left
+            b.Text="  ▸ "..name
+            b.Parent=ls
+            Instance.new("UICorner",b).CornerRadius=UDim.new(0,4)
+            b.MouseButton1Click:Connect(function()
+                local okr,c=pcall(readfile,SAVE_DIR.."/"..name..".json")
+                if not okr or not c then info.Text="读取失败" return end
+                local okd,d=pcall(function() return HS:JSONDecode(c) end)
+                if not okd or not d or not d.__slots then info.Text="解析失败" return end
+                local n=apply(d.__slots)
+                rebuild()
+                info.Text=string.format("✓ 已读取 [%s] 应用 %d 处",name,n)
+                dlg:Destroy()
+            end)
+        end
+    end
+    refresh2()
+end
+
+-- 删除列表
+function showDelList()
+    for _,ch in ipairs(g:GetChildren()) do
+        if ch:GetAttribute("Dlg") then ch:Destroy() end
+    end
+    local function refresh2()
+        for _,ch in ipairs(g:GetChildren()) do
+            if ch:GetAttribute("Dlg") then ch:Destroy() end
+        end
+        local files=listSaves()
+        local dlg=Instance.new("Frame")
+        dlg:SetAttribute("Dlg",true)
+        dlg.Size=UDim2.new(0,300,0,340)
+        dlg.Position=UDim2.new(0.5,-150,0.5,-170)
+        dlg.BackgroundColor3=Color3.fromRGB(30,20,20)
+        dlg.BorderSizePixel=0
+        dlg.Draggable=true
+        dlg.Parent=g
+        Instance.new("UICorner",dlg).CornerRadius=UDim.new(0,8)
+        local s=Instance.new("UIStroke")
+        s.Color=Color3.fromRGB(220,80,80)
+        s.Parent=dlg
+
+        local t=Instance.new("TextLabel")
+        t.Size=UDim2.new(1,-40,0,24)
+        t.Position=UDim2.new(0,10,0,5)
+        t.BackgroundTransparency=1
+        t.Font=Enum.Font.GothamBold
+        t.TextSize=12
+        t.TextColor3=Color3.fromRGB(255,150,150)
+        t.TextXAlignment=Enum.TextXAlignment.Left
+        t.Text="删除存档 ("..#files..")"
+        t.Parent=dlg
+
+        local xb=Instance.new("TextButton")
+        xb.Size=UDim2.new(0,24,0,24)
+        xb.Position=UDim2.new(1,-28,0,5)
+        xb.BackgroundColor3=Color3.fromRGB(80,30,30)
+        xb.BorderSizePixel=0
+        xb.Font=Enum.Font.GothamBold
+        xb.TextSize=14
+        xb.TextColor3=Color3.fromRGB(255,150,150)
+        xb.Text="×"
+        xb.Parent=dlg
+        Instance.new("UICorner",xb).CornerRadius=UDim.new(0,4)
+        xb.MouseButton1Click:Connect(function() dlg:Destroy() end)
+
+        local ls=Instance.new("ScrollingFrame")
+        ls.Size=UDim2.new(1,-20,1,-42)
+        ls.Position=UDim2.new(0,10,0,34)
+        ls.BackgroundColor3=Color3.fromRGB(10,10,10)
+        ls.BorderSizePixel=0
+        ls.ScrollBarThickness=4
+        ls.CanvasSize=UDim2.new(0,0,0,0)
+        ls.AutomaticCanvasSize=Enum.AutomaticSize.Y
+        ls.Parent=dlg
+        Instance.new("UICorner",ls).CornerRadius=UDim.new(0,5)
+        local l2=Instance.new("UIListLayout")
+        l2.Padding=UDim.new(0,4)
+        l2.Parent=ls
+
+        if #files==0 then
+            local e=Instance.new("TextLabel")
+            e.Size=UDim2.new(1,-10,0,40)
+            e.BackgroundTransparency=1
+            e.Font=Enum.Font.Gotham
+            e.TextSize=11
+            e.TextColor3=Color3.fromRGB(140,140,150)
+            e.Text="没有存档"
+            e.Parent=ls
+            return
+        end
+
+        for _,name in ipairs(files) do
+            local b=Instance.new("TextButton")
+            b.Size=UDim2.new(1,-10,0,32)
+            b.BackgroundColor3=Color3.fromRGB(60,30,30)
+            b.BorderSizePixel=0
+            b.Font=Enum.Font.GothamBold
+            b.TextSize=11
+            b.TextColor3=Color3.fromRGB(255,200,200)
+            b.TextXAlignment=Enum.TextXAlignment.Left
+            b.Text="  🗑 "..name
+            b.Parent=ls
+            Instance.new("UICorner",b).CornerRadius=UDim.new(0,4)
+            b.MouseButton1Click:Connect(function()
+                pcall(delfile,SAVE_DIR.."/"..name..".json")
+                info.Text="已删除 ["..name.."]"
+                refresh2()
+            end)
+        end
+    end
+    refresh2()
+end
+
+rebuild()
