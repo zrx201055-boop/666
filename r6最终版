@@ -1,0 +1,223 @@
+ local URL="https://raw.githubusercontent.com/zrx201055-boop/666/main/r6mhb"
+print("[合并] 下载...")
+local ok,src=pcall(function()return game:HttpGet(URL)end)
+if not ok or type(src)~="string"or#src<1000 then warn("[合并] 下载失败")return end
+print("[合并] ✓ "..#src.." 字节")
+
+local ANCHOR="sc.CanvasSize=UDim2.new(0,0,0,order*40+300)"
+local s1,e1=src:find(ANCHOR,1,true)
+if not s1 then
+    local a2="sc.CanvasSize=UDim2.new(0,0,0,order"
+    local s2=src:find(a2,1,true)
+    if s2 then local le=src:find("\n",s2,true)or#src s1=s2 e1=le-1 end
+end
+if not s1 then warn("[合并] 找不到锚点")return end
+
+local INJ=[==[
+
+do
+local g=getgenv and getgenv()or _G
+if not g.__r6F then g.__r6F={on=false,pos="all",color="80, 180, 255",size="5",count="30",ox=0,oy=0,oz=0}end
+if not g.__r6FA then g.__r6FA={}end
+if not g.__r6FC then g.__r6FC={}end
+local S=g.__r6F
+if S.ox==nil then S.ox=0 end
+if S.oy==nil then S.oy=0 end
+if S.oz==nil then S.oz=0 end
+local A=g.__r6FA local C=g.__r6FC
+
+if not sc:FindFirstChild("FLAME_ADDON")then
+local RS=game:GetService("RunService")
+local LP=game:GetService("Players").LocalPlayer
+local function pc(s)local r,gg,b=s:match("(%d+)%s*,%s*(%d+)%s*,%s*(%d+)")if r then return Color3.fromRGB(tonumber(r),tonumber(gg),tonumber(b))end return Color3.fromRGB(80,180,255)end
+local function gp(k)
+local c=LP.Character if not c then return{}end
+local L={}
+local function gg(ns)for _,n in ipairs(ns)do local p=c:FindFirstChild(n)if p and p:IsA("BasePart")then table.insert(L,p)end end end
+if k=="all"then gg({"HumanoidRootPart","Head","Torso","UpperTorso","LowerTorso","Left Arm","Right Arm","LeftUpperArm","RightUpperArm","LeftLowerArm","RightLowerArm","Left Leg","Right Leg","LeftUpperLeg","RightUpperLeg","LeftLowerLeg","RightLowerLeg","LeftHand","RightHand","LeftFoot","RightFoot"})
+elseif k=="head"then gg({"Head"})
+elseif k=="right"then gg({"RightHand","Right Arm","RightLowerArm","RightUpperArm"})
+elseif k=="left"then gg({"LeftHand","Left Arm","LeftLowerArm","LeftUpperArm"})
+elseif k=="torso"then gg({"UpperTorso","Torso","LowerTorso"})
+elseif k=="legs"then gg({"LeftFoot","RightFoot","Left Leg","Right Leg","LeftUpperLeg","RightUpperLeg","LeftLowerLeg","RightLowerLeg"})end
+return L end
+local function da()
+for px,gr in pairs(A)do pcall(function()
+if gr.fire then gr.fire:Destroy()end
+if gr.part then gr.part:Destroy()end
+if gr.att then gr.att:Destroy()end
+if gr.light then gr.light:Destroy()end
+if px and px.Parent then px:Destroy()end
+end)end
+g.__r6FA={}A=g.__r6FA end
+local function mf(t)
+local p=Instance.new("Part")p.Name="FlameProxy"p.Size=Vector3.new(.1,.1,.1)p.Transparency=1 p.CanCollide=false p.Massless=true p.Anchored=false
+p.CFrame=t.CFrame*CFrame.new(S.ox,S.oy,S.oz)p.Parent=t
+local w=Instance.new("WeldConstraint")w.Part0=t w.Part1=p w.Parent=p
+local col=pc(S.color)local sz=tonumber(S.size)or 5 local ct=tonumber(S.count)or 30
+local gr={proxy=p}
+local fi=Instance.new("Fire")fi.Color=col fi.SecondaryColor=Color3.fromRGB(180,220,255)fi.Heat=5 fi.Size=sz fi.Parent=p gr.fire=fi
+local at=Instance.new("Attachment")at.Parent=p
+local pt=Instance.new("ParticleEmitter")
+pt.Texture="rbxassetid://243660364"
+pt.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,col),ColorSequenceKeypoint.new(.5,Color3.fromRGB(math.min(255,col.R+100),math.min(255,col.G+50),255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(255,255,255))}
+pt.Size=NumberSequence.new{NumberSequenceKeypoint.new(0,sz*.1),NumberSequenceKeypoint.new(.3,sz*.6),NumberSequenceKeypoint.new(1,sz*.1)}
+pt.Transparency=NumberSequence.new{NumberSequenceKeypoint.new(0,.2),NumberSequenceKeypoint.new(.5,.5),NumberSequenceKeypoint.new(1,1)}
+pt.Lifetime=NumberRange.new(.4,.8)pt.Rate=ct pt.Speed=NumberRange.new(2,4)pt.SpreadAngle=Vector2.new(15,15)pt.Rotation=NumberRange.new(0,360)pt.RotSpeed=NumberRange.new(-30,30)pt.LightEmission=1 pt.LightInfluence=0 pt.Parent=at
+gr.part=pt gr.att=at
+local li=Instance.new("PointLight")li.Color=col li.Brightness=3 li.Range=sz*2 li.Parent=p gr.light=li
+return gr end
+local function aa()
+da()
+if not S.on then return end
+for _,p in ipairs(gp(S.pos))do local gr=mf(p)A[gr.proxy]=gr end
+end
+local DACC={
+{name="腰部蝴蝶结裙",type="Waist",mesh="rbxassetid://107662008702107",tex="rbxassetid://108643951163165",size=Vector3.new(1.442,0.649,1.429)},
+{name="帽子",type="Hat",mesh="rbxassetid://119265790328389",tex="rbxassetid://119197601207590",size=Vector3.new(1.102,0.731,0.826)},
+{name="白发",type="Hair",mesh="rbxassetid://18452966023",tex="rbxassetid://18452817534",size=Vector3.new(1.405,2.760,1.572)}}
+local DO={Hat={0,.6,0},Hair={0,.2,0},Waist={0,-.2,0}}
+local MP={Hat="Head",Hair="Head",Waist="Torso"}
+local function wi(it)
+local c=LP.Character if not c then return false end
+local mt=MP[it.type]or"Torso"
+local tg=c:FindFirstChild(mt)or c:FindFirstChild("Torso")or c:FindFirstChild("UpperTorso")or c:FindFirstChild("HumanoidRootPart")
+if not tg then return false end
+local of=DO[it.type]or{0,0,0}
+local h=Instance.new("MeshPart")h.Name="CustomAcc_"..it.name h.MeshId=it.mesh h.TextureID=it.tex or""h.Size=it.size h.CanCollide=false h.Massless=true h.Anchored=true h.Parent=c
+local cn=RS.RenderStepped:Connect(function()
+if not h.Parent then cn:Disconnect()return end
+local cc=LP.Character if not cc then return end
+local pp=cc:FindFirstChild(mt)or cc:FindFirstChild("Torso")or cc:FindFirstChild("UpperTorso")or cc:FindFirstChild("HumanoidRootPart")
+if not pp then return end
+h.CFrame=pp.CFrame*CFrame.new(of[1],of[2],of[3])
+end)
+table.insert(C,{handle=h,conn=cn,name=it.name})
+return true end
+local function wa()local n=0 for _,it in ipairs(DACC)do if wi(it)then n=n+1 end task.wait(.05)end return n end
+local function ch()
+local c=LP.Character if not c then return 0 end
+local n=0
+for _,o in ipairs(c:GetDescendants())do
+if o:IsA("Accessory")then local ok2,at=pcall(function()return o.AccessoryType end)if ok2 and at==Enum.AccessoryType.Hair then o:Destroy()n=n+1 end end
+end
+for _,o in ipairs(c:GetDescendants())do
+local nm=o.Name:lower()
+if(nm:find("hair")or nm:find("白发")or nm:find("wig"))and o.Name~="Head"then o:Destroy()n=n+1 end
+end
+local hd=c:FindFirstChild("Head")
+if hd then for _,o in ipairs(hd:GetChildren())do if o:IsA("Accessory")or o:IsA("Hat")or o:IsA("Decal")then o:Destroy()n=n+1 end end end
+return n end
+local function ca()
+local c=LP.Character if not c then return 0,0 end
+local n=0
+for _,o in ipairs(c:GetChildren())do if o:IsA("Accoutrement")then o:Destroy()n=n+1 end end
+local hn=ch()n=n+hn
+for _,cls in ipairs({"Shirt","Pants","ShirtGraphic"})do local x=c:FindFirstChildOfClass(cls)if x then x:Destroy()n=n+1 end end
+for _,o in ipairs(c:GetChildren())do local nm=o.Name if nm:sub(1,5)=="Item_"or nm:sub(1,10)=="CustomAcc_"then o:Destroy()n=n+1 end end
+for _,x in ipairs(C)do if x.conn then pcall(function()x.conn:Disconnect()end)end end
+g.__r6FC={}C=g.__r6FC
+return n,hn end
+
+local B=9999
+local function TB(t,c,w)
+local b=Instance.new("TextButton")b.Size=UDim2.new(0,w,1,0)b.BackgroundColor3=c b.Text=t b.TextColor3=Color3.fromRGB(255,255,255)b.TextSize=10 b.Font=Enum.Font.GothamBold b.BorderSizePixel=0 return b end
+local function TL(t,c,sz)
+local l=Instance.new("TextLabel")l.BackgroundColor3=c l.BorderSizePixel=0 l.Font=Enum.Font.GothamBold l.TextSize=sz l.TextColor3=Color3.fromRGB(255,200,100)l.TextXAlignment=Enum.TextXAlignment.Left l.Text="  ━━ "..t.." ━━"return l end
+
+local h1=TL("🔥 蓝色火焰",Color3.fromRGB(40,40,60),11)h1.Name="FLAME_ADDON"h1.Size=UDim2.new(1,-6,0,20)h1.LayoutOrder=B h1.Parent=sc
+local st=Instance.new("TextLabel")st.Size=UDim2.new(1,-6,0,18)st.BackgroundColor3=Color3.fromRGB(20,25,35)st.BorderSizePixel=0 st.Font=Enum.Font.Code st.TextSize=9 st.TextColor3=Color3.fromRGB(120,220,255)st.TextXAlignment=Enum.TextXAlignment.Left st.Text="  "..(S.on and"已开启"or"已关闭")st.LayoutOrder=B+1 st.Parent=sc
+
+local pR=Instance.new("Frame")pR.Size=UDim2.new(1,-6,0,24)pR.BackgroundTransparency=1 pR.LayoutOrder=B+2 pR.Parent=sc
+local pl=Instance.new("UIListLayout",pR)pl.FillDirection=Enum.FillDirection.Horizontal pl.Padding=UDim.new(0,3)
+local pB={}
+local pNames={{"全部","all"},{"头","head"},{"右手","right"},{"左手","left"},{"躯干","torso"},{"腿","legs"}}
+for _,pn in ipairs(pNames)do
+local b=TB(pn[1],(S.pos==pn[2])and Color3.fromRGB(50,130,220)or Color3.fromRGB(40,50,70),50)b.Parent=pR
+pB[pn[2]]=b
+b.MouseButton1Click:Connect(function()
+S.pos=pn[2]
+for k,bb in pairs(pB)do bb.BackgroundColor3=(k==pn[2])and Color3.fromRGB(50,130,220)or Color3.fromRGB(40,50,70)end
+if S.on then aa()end
+end)end
+
+local cR=Instance.new("Frame")cR.Size=UDim2.new(1,-6,0,22)cR.BackgroundColor3=Color3.fromRGB(30,35,50)cR.BorderSizePixel=0 cR.LayoutOrder=B+3 cR.Parent=sc
+local cL=Instance.new("TextLabel")cL.Size=UDim2.new(0,70,1,0)cL.Position=UDim2.new(0,5,0,0)cL.BackgroundTransparency=1 cL.Font=Enum.Font.GothamBold cL.TextSize=10 cL.TextColor3=Color3.fromRGB(150,180,220)cL.TextXAlignment=Enum.TextXAlignment.Left cL.Text="颜色 RGB:"cL.Parent=cR
+local cB=Instance.new("TextBox")cB.Size=UDim2.new(1,-80,1,0)cB.Position=UDim2.new(0,75,0,0)cB.BackgroundTransparency=1 cB.Font=Enum.Font.Code cB.TextSize=10 cB.TextColor3=Color3.fromRGB(220,230,255)cB.TextXAlignment=Enum.TextXAlignment.Left cB.Text=S.color cB.ClearTextOnFocus=false cB.Parent=cR
+cB.FocusLost:Connect(function()S.color=cB.Text if S.on then aa()end end)
+
+local szR=Instance.new("Frame")szR.Size=UDim2.new(1,-6,0,22)szR.BackgroundTransparency=1 szR.LayoutOrder=B+4 szR.Parent=sc
+local szl=Instance.new("UIListLayout",szR)szl.FillDirection=Enum.FillDirection.Horizontal szl.Padding=UDim.new(0,4)
+local function mkS(pre,def,key)
+local h=Instance.new("Frame")h.Size=UDim2.new(0,145,1,0)h.BackgroundColor3=Color3.fromRGB(30,35,50)h.BorderSizePixel=0 h.Parent=szR
+local l=Instance.new("TextLabel")l.Size=UDim2.new(0,40,1,0)l.Position=UDim2.new(0,5,0,0)l.BackgroundTransparency=1 l.Font=Enum.Font.Gotham l.TextSize=9 l.TextColor3=Color3.fromRGB(150,180,220)l.TextXAlignment=Enum.TextXAlignment.Left l.Text=pre l.Parent=h
+local b=Instance.new("TextBox")b.Size=UDim2.new(1,-50,1,0)b.Position=UDim2.new(0,45,0,0)b.BackgroundTransparency=1 b.Font=Enum.Font.Code b.TextSize=10 b.TextColor3=Color3.fromRGB(220,230,255)b.TextXAlignment=Enum.TextXAlignment.Left b.Text=def b.ClearTextOnFocus=false b.Parent=h
+b.FocusLost:Connect(function()S[key]=b.Text if S.on then aa()end end)
+return b end
+mkS("大小:",S.size,"size")
+mkS("数量:",S.count,"count")
+
+local oH=Instance.new("TextLabel")oH.Size=UDim2.new(1,-6,0,16)oH.BackgroundColor3=Color3.fromRGB(35,35,50)oH.BorderSizePixel=0 oH.Font=Enum.Font.GothamBold oH.TextSize=9 oH.TextColor3=Color3.fromRGB(220,200,255)oH.TextXAlignment=Enum.TextXAlignment.Left oH.Text="  ── 位置微调 (Studs) ──"oH.LayoutOrder=B+40 oH.Parent=sc
+
+local oS=Instance.new("TextLabel")oS.Size=UDim2.new(1,-6,0,18)oS.BackgroundColor3=Color3.fromRGB(20,20,28)oS.BorderSizePixel=0 oS.Font=Enum.Font.Code oS.TextSize=9 oS.TextColor3=Color3.fromRGB(255,220,120)oS.TextXAlignment=Enum.TextXAlignment.Left oS.Text="  X "..string.format("%.2f",S.ox).."  Y "..string.format("%.2f",S.oy).."  Z "..string.format("%.2f",S.oz)oS.LayoutOrder=B+41 oS.Parent=sc
+local function updO()oS.Text="  X "..string.format("%.2f",S.ox).."  Y "..string.format("%.2f",S.oy).."  Z "..string.format("%.2f",S.oz)end
+local function mkRow(ax,gv,sv)
+local r=Instance.new("Frame")r.Size=UDim2.new(1,-6,0,22)r.BackgroundTransparency=1 r.LayoutOrder=B+42 r.Parent=sc
+local rl=Instance.new("UIListLayout",r)rl.FillDirection=Enum.FillDirection.Horizontal rl.Padding=UDim.new(0,3)
+local lb=Instance.new("TextLabel")lb.Size=UDim2.new(0,16,1,0)lb.BackgroundTransparency=1 lb.Font=Enum.Font.GothamBold lb.TextSize=11 lb.TextColor3=Color3.fromRGB(180,200,230)lb.Text=ax lb.Parent=r
+local function bs(t,c,d)
+local b=TB(t,c,56)b.Parent=r
+b.MouseButton1Click:Connect(function()sv(gv()+d)updO()if S.on then aa()end end)end
+bs("-0.1",Color3.fromRGB(180,60,60),-.1)
+bs("-0.05",Color3.fromRGB(200,110,60),-.05)
+bs("+0.05",Color3.fromRGB(60,150,100),.05)
+bs("+0.1",Color3.fromRGB(50,130,220),.1)end
+mkRow("X",function()return S.ox end,function(v)S.ox=v end)
+mkRow("Y",function()return S.oy end,function(v)S.oy=v end)
+mkRow("Z",function()return S.oz end,function(v)S.oz=v end)
+local rR=Instance.new("Frame")rR.Size=UDim2.new(1,-6,0,22)rR.BackgroundTransparency=1 rR.LayoutOrder=B+43 rR.Parent=sc
+local rB=Instance.new("TextButton")rB.Size=UDim2.new(0,120,1,0)rB.BackgroundColor3=Color3.fromRGB(120,90,180)rB.Text="↻ 偏移归零"rB.TextColor3=Color3.fromRGB(255,255,255)rB.TextSize=10 rB.Font=Enum.Font.GothamBold rB.BorderSizePixel=0 rB.Parent=rR
+rB.MouseButton1Click:Connect(function()S.ox=0 S.oy=0 S.oz=0 updO()if S.on then aa()end end)
+
+local bR=Instance.new("Frame")bR.Size=UDim2.new(1,-6,0,26)bR.BackgroundTransparency=1 bR.LayoutOrder=B+5 bR.Parent=sc
+local bl=Instance.new("UIListLayout",bR)bl.FillDirection=Enum.FillDirection.Horizontal bl.Padding=UDim.new(0,4)
+local tg=TB(S.on and"🔥 关火"or"🔥 开火",S.on and Color3.fromRGB(200,80,80)or Color3.fromRGB(50,130,220),90)tg.Parent=bR
+local ap=TB("✓ 应用",Color3.fromRGB(60,170,100),90)ap.Parent=bR
+local rc=TB("↻ 蓝",Color3.fromRGB(100,100,140),88)rc.Parent=bR
+tg.MouseButton1Click:Connect(function()
+S.on=not S.on
+if S.on then aa()tg.Text="🔥 关火"tg.BackgroundColor3=Color3.fromRGB(200,80,80)st.Text="  已开启"st.TextColor3=Color3.fromRGB(120,220,255)
+else da()tg.Text="🔥 开火"tg.BackgroundColor3=Color3.fromRGB(50,130,220)st.Text="  已关闭"st.TextColor3=Color3.fromRGB(180,180,180)end end)
+ap.MouseButton1Click:Connect(function()S.on=true tg.Text="🔥 关火"tg.BackgroundColor3=Color3.fromRGB(200,80,80)aa()st.Text="  已应用"end)
+rc.MouseButton1Click:Connect(function()S.color="80, 180, 255"cB.Text=S.color if S.on then aa()end end)
+
+local wH=TL("👗 一键穿戴",Color3.fromRGB(40,40,60),11)wH.Name="WEAR_ADDON"wH.Size=UDim2.new(1,-6,0,20)wH.LayoutOrder=B+6 wH.Parent=sc
+local wS=Instance.new("TextLabel")wS.Size=UDim2.new(1,-6,0,18)wS.BackgroundColor3=Color3.fromRGB(20,20,28)wS.BorderSizePixel=0 wS.Font=Enum.Font.Code wS.TextSize=9 wS.TextColor3=Color3.fromRGB(200,180,220)wS.TextXAlignment=Enum.TextXAlignment.Left wS.Text="  就绪"wS.LayoutOrder=B+7 wS.Parent=sc
+local wR=Instance.new("Frame")wR.Size=UDim2.new(1,-6,0,26)wR.BackgroundTransparency=1 wR.LayoutOrder=B+8 wR.Parent=sc
+local wl=Instance.new("UIListLayout",wR)wl.FillDirection=Enum.FillDirection.Horizontal wl.Padding=UDim.new(0,4)
+local wA=TB("👗 一键穿全部",Color3.fromRGB(180,100,200),145)wA.Parent=wR
+local wN=TB("👕 一键脱光",Color3.fromRGB(200,90,90),145)wN.Parent=wR
+wA.MouseButton1Click:Connect(function()wS.Text="  ⏳ 穿戴中..."task.spawn(function()
+local n=wa()S.on=true aa()tg.Text="🔥 关火"tg.BackgroundColor3=Color3.fromRGB(200,80,80)
+wS.Text="  ✅ 已穿 "..n.." 件 + 开火"wS.TextColor3=Color3.fromRGB(140,240,160)end)end)
+wN.MouseButton1Click:Connect(function()wS.Text="  ⏳ 脱光中..."task.spawn(function()
+local n,hn=ca()S.on=false da()tg.Text="🔥 开火"tg.BackgroundColor3=Color3.fromRGB(50,130,220)
+wS.Text="  ✅ 清 "..n.." (头发 "..hn..")"wS.TextColor3=Color3.fromRGB(240,200,140)end)end)
+
+local hB=Instance.new("TextButton")hB.Size=UDim2.new(1,-6,0,26)hB.BackgroundColor3=Color3.fromRGB(140,70,180)hB.Text="💇 单独清头发"hB.TextColor3=Color3.fromRGB(255,255,255)hB.TextSize=10 hB.Font=Enum.Font.GothamBold hB.BorderSizePixel=0 hB.LayoutOrder=B+9 hB.Parent=sc
+hB.MouseButton1Click:Connect(function()task.spawn(function()
+local n=ch()wS.Text="  💇 清 "..n.." 个头发"wS.TextColor3=Color3.fromRGB(220,180,255)end)end)
+
+if S.on then aa()end
+end
+end
+
+]==]
+
+local newSrc=src:sub(1,e1)..INJ..src:sub(e1+1)
+print("[合并] 长度: "..#newSrc)
+local fn,errSyn=loadstring(newSrc)
+if not fn then warn("[合并] 语法错误: "..tostring(errSyn))return end
+print("[合并] ✓ 语法通过")
+local ok3,err3=pcall(fn)
+if not ok3 then warn("[合并] 执行失败: "..tostring(err3))else print("[合并] 🎉 完成")end
