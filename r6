@@ -1,0 +1,719 @@
+-- ============================================================
+-- R6 换装 + 蓝色火焰 + 一键穿脱 (R15脱衣逻辑版)
+-- ============================================================
+
+-- ① 加载 R6
+local okLoad = pcall(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/zrx201055-boop/666/main/r6mhb"))()
+end)
+if not okLoad then warn("[整合] R6 加载失败") return end
+task.wait(3)
+
+local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+local LP = game:GetService("Players").LocalPlayer
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("RunService")
+
+-- 找 R6 UI
+local r6gui = pg:FindFirstChild("CesiLoader_R6")
+if not r6gui then
+    for _, g in ipairs(pg:GetChildren()) do
+        if g:IsA("ScreenGui") and g:FindFirstChildWhichIsA("ScrollingFrame", true) then
+            r6gui = g; break
+        end
+    end
+end
+if not r6gui then warn("[整合] 找不到 R6 UI") return end
+
+local sc
+for _, obj in ipairs(r6gui:GetDescendants()) do
+    if obj:IsA("ScrollingFrame") then sc = obj; break end
+end
+if not sc then warn("[整合] 找不到滚动区") return end
+
+-- ============================================================
+-- 状态
+-- ============================================================
+local state = {
+    isOn = true,
+    currentPos = "all",
+    color = "80, 180, 255",
+    size = "5",
+    count = "30",
+}
+local attached = {}
+
+-- ============================================================
+-- 火焰核心
+-- ============================================================
+local function parseColor(str)
+    local r, g, b = str:match("(%d+)%s*,%s*(%d+)%s*,%s*(%d+)")
+    if r and g and b then return Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b)) end
+    return Color3.fromRGB(80, 180, 255)
+end
+
+local function findPart(key)
+    local char = LP.Character
+    if not char then return {} end
+    local function get(names)
+        local r = {}
+        for _, n in ipairs(names) do
+            local p = char:FindFirstChild(n)
+            if p and p:IsA("BasePart") then table.insert(r, p) end
+        end
+        return r
+    end
+    if key == "all" then
+        local list = {}
+        for _, n in ipairs({"HumanoidRootPart","Head","Torso","UpperTorso","LowerTorso",
+            "Left Arm","Right Arm","LeftUpperArm","RightUpperArm","LeftLowerArm","RightLowerArm",
+            "Left Leg","Right Leg","LeftUpperLeg","RightUpperLeg","LeftLowerLeg","RightLowerLeg",
+            "LeftHand","RightHand","LeftFoot","RightFoot"}) do
+            local p = char:FindFirstChild(n)
+            if p and p:IsA("BasePart") then table.insert(list, p) end
+        end
+        return list
+    elseif key == "head" then return get({"Head"})
+    elseif key == "right" then return get({"RightHand","Right Arm","RightLowerArm","RightUpperArm"})
+    elseif key == "left" then return get({"LeftHand","Left Arm","LeftLowerArm","LeftUpperArm"})
+    elseif key == "torso" then return get({"UpperTorso","Torso","LowerTorso"})
+    elseif key == "legs" then return get({"LeftFoot","RightFoot","Left Leg","Right Leg","LeftUpperLeg","RightUpperLeg","LeftLowerLeg","RightLowerLeg"})
+    end
+    return {}
+end
+
+local function makeProxy(targetPart)
+    local proxy = Instance.new("Part")
+    proxy.Name = "BlueFlameProxy"
+    proxy.Size = Vector3.new(0.1,0.1,0.1)
+    proxy.Transparency = 1
+    proxy.CanCollide = false
+    proxy.Massless = true
+    proxy.Anchored = false
+    proxy.CFrame = targetPart.CFrame
+    proxy.Parent = targetPart
+    local weld = Instance.new("WeldConstraint")
+    weld.Part0 = targetPart
+    weld.Part1 = proxy
+    weld.Parent = proxy
+    return proxy
+end
+
+local function buildFire(proxy)
+    local color = parseColor(state.color)
+    local size = tonumber(state.size) or 5
+    local count = tonumber(state.count) or 30
+    local group = { proxy = proxy }
+
+    local fire = Instance.new("Fire")
+    fire.Name = "LocalBlueFire"
+    fire.Color = color
+    fire.SecondaryColor = Color3.fromRGB(180,220,255)
+    fire.Heat = 5
+    fire.Size = size
+    fire.Parent = proxy
+    group.fire = fire
+
+    local attach = Instance.new("Attachment")
+    attach.Name = "LocalBlueFlameAttachment"
+    attach.Parent = proxy
+
+    local particle = Instance.new("ParticleEmitter")
+    particle.Name = "LocalBlueFlameParticle"
+    particle.Texture = "rbxassetid://243660364"
+    particle.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, color),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(
+            math.min(255, color.R + 100),
+            math.min(255, color.G + 50),
+            255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(255,255,255)),
+    })
+    particle.Size = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, size * 0.1),
+        NumberSequenceKeypoint.new(0.3, size * 0.6),
+        NumberSequenceKeypoint.new(1, size * 0.1),
+    })
+    particle.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.2),
+        NumberSequenceKeypoint.new(0.5, 0.5),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    particle.Lifetime = NumberRange.new(0.4, 0.8)
+    particle.Rate = count
+    particle.Speed = NumberRange.new(2, 4)
+    particle.SpreadAngle = Vector2.new(15, 15)
+    particle.Rotation = NumberRange.new(0, 360)
+    particle.RotSpeed = NumberRange.new(-30, 30)
+    particle.LightEmission = 1
+    particle.LightInfluence = 0
+    particle.Parent = attach
+    group.particle = particle
+    group.attach = attach
+
+    local light = Instance.new("PointLight")
+    light.Name = "LocalBlueLight"
+    light.Color = color
+    light.Brightness = 3
+    light.Range = size * 2
+    light.Parent = proxy
+    group.light = light
+
+    return group
+end
+
+local function detachAll()
+    for proxy, group in pairs(attached) do
+        pcall(function()
+            if group.fire then group.fire:Destroy() end
+            if group.particle then group.particle:Destroy() end
+            if group.attach then group.attach:Destroy() end
+            if group.light then group.light:Destroy() end
+            if proxy and proxy.Parent then proxy:Destroy() end
+        end)
+    end
+    attached = {}
+end
+
+local uiRefs = {}
+
+local function attachToChar()
+    detachAll()
+    if not state.isOn then return end
+    local parts = findPart(state.currentPos)
+    for _, part in ipairs(parts) do
+        local proxy = makeProxy(part)
+        local group = buildFire(proxy)
+        attached[proxy] = group
+    end
+    if uiRefs.status then
+        uiRefs.status.Text = "  ✓ 挂到 " .. #parts .. " 个部件"
+    end
+end
+
+-- ============================================================
+-- 内置配件
+-- ============================================================
+local DEFAULT_ACC = {
+    { name="腰部蝴蝶结裙", type="Waist", mesh="rbxassetid://107662008702107", tex="rbxassetid://108643951163165", size=Vector3.new(1.442,0.649,1.429) },
+    { name="帽子",        type="Hat",   mesh="rbxassetid://119265790328389", tex="rbxassetid://119197601207590", size=Vector3.new(1.102,0.731,0.826) },
+    { name="白发",        type="Hair",  mesh="rbxassetid://18452966023",     tex="rbxassetid://18452817534",     size=Vector3.new(1.405,2.760,1.572) },
+}
+
+local DOFF = {
+    Hat={0,0.6,0}, Hair={0,0.2,0}, Face={0,0,-0.4}, Neck={0,-0.2,0},
+    Shoulder={0,0,0}, Front={0,0,-0.4}, Back={0,0,0.5},
+    Waist={0,-0.2,0}, Jacket={0,0,0}, MeshPart={0,0,0},
+}
+local MP = {
+    Hat="Head", Hair="Head", Face="Head", Neck="Head",
+    Shoulder="Torso", Front="Torso", Back="Torso",
+    Waist="Torso", Jacket="Torso", MeshPart="Torso",
+}
+
+local customItems = {}
+
+local function wearCustomItem(item)
+    local char = LP.Character
+    if not char then return false end
+    local mount = MP[item.type] or "Torso"
+    local target = char:FindFirstChild(mount) or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+    if not target then return false end
+    local off = DOFF[item.type] or {0,0,0}
+
+    local h = Instance.new("MeshPart")
+    h.Name = "CustomAcc_" .. item.name
+    h.MeshId = item.mesh
+    h.TextureID = item.tex or ""
+    h.Size = item.size
+    h.CanCollide = false
+    h.Massless = true
+    h.Anchored = true
+    h.Parent = char
+
+    local conn = RS.RenderStepped:Connect(function()
+        if not h or not h.Parent then conn:Disconnect() return end
+        local cc = LP.Character
+        if not cc then return end
+        local pp = cc:FindFirstChild(mount) or cc:FindFirstChild("Torso") or cc:FindFirstChild("HumanoidRootPart")
+        if not pp then return end
+        h.CFrame = pp.CFrame * CFrame.new(off[1], off[2], off[3])
+    end)
+
+    table.insert(customItems, { handle = h, conn = conn, name = item.name })
+    return true
+end
+
+local function clearCustomItems()
+    for _, it in ipairs(customItems) do
+        pcall(function()
+            if it.conn then it.conn:Disconnect() end
+            if it.handle then it.handle:Destroy() end
+        end)
+    end
+    customItems = {}
+end
+
+local function wearAllDefault()
+    local count = 0
+    for _, item in ipairs(DEFAULT_ACC) do
+        local ok = wearCustomItem(item)
+        if ok then count = count + 1 end
+        task.wait(0.05)
+    end
+    return count
+end
+
+-- ============================================================
+-- ★★★ 照搬 R15 版脱衣逻辑 ★★★
+-- ============================================================
+local function cleanCharacter()
+    local c = LP.Character
+    if not c then return 0 end
+    local n = 0
+
+    -- ① 用 Accoutrement 父类一次抓所有 3D 饰品（涵盖 Accessory + Hat）
+    for _, obj in ipairs(c:GetChildren()) do
+        if obj:IsA("Accoutrement") then
+            obj:Destroy()
+            n = n + 1
+        end
+    end
+
+    -- ② 清 2D 服装
+    for _, cls in ipairs({"Shirt","Pants","ShirtGraphic"}) do
+        local o = c:FindFirstChildOfClass(cls)
+        if o then
+            o:Destroy()
+            n = n + 1
+        end
+    end
+
+    -- ③ 清脚本自己加上的配件（Item_ 和 CustomAcc_ 前缀）
+    for _, obj in ipairs(c:GetChildren()) do
+        if obj.Name:sub(1,5) == "Item_" or obj.Name:sub(1,10) == "CustomAcc_" then
+            obj:Destroy()
+            n = n + 1
+        end
+    end
+
+    -- ④ 断开我们自己创建的 RenderStepped 连接 + 清句柄
+    for _, it in ipairs(customItems) do
+        if it.conn then
+            pcall(function() it.conn:Disconnect() end)
+        end
+    end
+    customItems = {}
+
+    return n
+end
+
+-- ============================================================
+-- 按钮识别
+-- ============================================================
+local myBtnNames = {
+    FLAME_TOGGLE=true, FLAME_APPLY=true, FLAME_RESETCOLOR=true,
+    WEAR_ALL=true, WEAR_NONE=true, WEAR_FLAME=true, WEAR_DEFAULT=true,
+    WEAR_DEFCLEAR=true,
+}
+
+local function isAccessoryBtn(btn)
+    if not btn:IsA("TextButton") then return false end
+    if myBtnNames[btn.Name] then return false end
+    local t = btn.Text or ""
+    local hasDot = t:find("●") or t:find("○")
+    local hasType = t:match("%[.-%]")
+    return hasDot and hasType
+end
+
+local function isWorn(btn)
+    local t = btn.Text or ""
+    return t:find("●") ~= nil
+end
+
+local function clickAllAccessoryBtns(wear)
+    local btns = {}
+    for _, btn in ipairs(sc:GetDescendants()) do
+        if isAccessoryBtn(btn) then
+            local worn = isWorn(btn)
+            if (wear and not worn) or (not wear and worn) then
+                table.insert(btns, btn)
+            end
+        end
+    end
+    local count = 0
+    for i, btn in ipairs(btns) do
+        local ok = pcall(function() btn:Activate() end)
+        if ok then count = count + 1 end
+        task.wait(0.06)
+    end
+    return count
+end
+
+-- ============================================================
+-- UI 构建
+-- ============================================================
+local function buildUI()
+    if sc:FindFirstChild("FLAME_MODULE") then return end
+    local base = 9999
+
+    -- 火焰章节
+    local hdr = Instance.new("TextLabel")
+    hdr.Name = "FLAME_MODULE"
+    hdr.Size = UDim2.new(1,-6,0,20)
+    hdr.BackgroundColor3 = Color3.fromRGB(60,30,80)
+    hdr.BorderSizePixel = 0
+    hdr.Font = Enum.Font.GothamBold
+    hdr.TextSize = 11
+    hdr.TextColor3 = Color3.fromRGB(200,180,255)
+    hdr.TextXAlignment = Enum.TextXAlignment.Left
+    hdr.Text = "  ━━ 🔥 蓝色火焰 ━━"
+    hdr.LayoutOrder = base
+    hdr.Parent = sc
+    Instance.new("UICorner", hdr).CornerRadius = UDim.new(0,3)
+
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(1,-6,0,18)
+    status.BackgroundColor3 = Color3.fromRGB(20,25,35)
+    status.BorderSizePixel = 0
+    status.Font = Enum.Font.Code
+    status.TextSize = 9
+    status.TextColor3 = Color3.fromRGB(120,220,255)
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.Text = "  " .. (state.isOn and "已开启" or "已关闭")
+    status.LayoutOrder = base+1
+    status.Parent = sc
+    Instance.new("UICorner", status).CornerRadius = UDim.new(0,3)
+    uiRefs.status = status
+
+    local posRow = Instance.new("Frame")
+    posRow.Size = UDim2.new(1,-6,0,24)
+    posRow.BackgroundTransparency = 1
+    posRow.LayoutOrder = base+2
+    posRow.Parent = sc
+    local pl = Instance.new("UIListLayout", posRow)
+    pl.FillDirection = Enum.FillDirection.Horizontal
+    pl.Padding = UDim.new(0,3)
+    pl.Parent = posRow
+
+    local posBtns = {}
+    local function mkPosBtn(text, key)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0,50,1,0)
+        b.BackgroundColor3 = (state.currentPos == key) and Color3.fromRGB(50,130,220) or Color3.fromRGB(40,50,70)
+        b.Text = text
+        b.TextColor3 = Color3.fromRGB(255,255,255)
+        b.TextSize = 10
+        b.Font = Enum.Font.GothamBold
+        b.BorderSizePixel = 0
+        b.Parent = posRow
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,3)
+        return b
+    end
+    posBtns.all   = mkPosBtn("全部","all")
+    posBtns.head  = mkPosBtn("头","head")
+    posBtns.right = mkPosBtn("右手","right")
+    posBtns.left  = mkPosBtn("左手","left")
+    posBtns.torso = mkPosBtn("躯干","torso")
+    posBtns.legs  = mkPosBtn("腿","legs")
+
+    local function refreshPos()
+        for k, b in pairs(posBtns) do
+            b.BackgroundColor3 = (state.currentPos == k) and Color3.fromRGB(50,130,220) or Color3.fromRGB(40,50,70)
+        end
+    end
+    for k, b in pairs(posBtns) do
+        b.MouseButton1Click:Connect(function()
+            state.currentPos = k
+            refreshPos()
+            if state.isOn then attachToChar() end
+        end)
+    end
+
+    local colorRow = Instance.new("Frame")
+    colorRow.Size = UDim2.new(1,-6,0,22)
+    colorRow.BackgroundColor3 = Color3.fromRGB(30,35,50)
+    colorRow.BorderSizePixel = 0
+    colorRow.LayoutOrder = base+3
+    colorRow.Parent = sc
+    Instance.new("UICorner", colorRow).CornerRadius = UDim.new(0,3)
+
+    local colorLbl = Instance.new("TextLabel")
+    colorLbl.Size = UDim2.new(0,70,1,0)
+    colorLbl.Position = UDim2.new(0,5,0,0)
+    colorLbl.BackgroundTransparency = 1
+    colorLbl.Font = Enum.Font.GothamBold
+    colorLbl.TextSize = 10
+    colorLbl.TextColor3 = Color3.fromRGB(150,180,220)
+    colorLbl.TextXAlignment = Enum.TextXAlignment.Left
+    colorLbl.Text = "颜色 RGB:"
+    colorLbl.Parent = colorRow
+
+    local colorBox = Instance.new("TextBox")
+    colorBox.Size = UDim2.new(1,-80,1,0)
+    colorBox.Position = UDim2.new(0,75,0,0)
+    colorBox.BackgroundTransparency = 1
+    colorBox.Font = Enum.Font.Code
+    colorBox.TextSize = 10
+    colorBox.TextColor3 = Color3.fromRGB(220,230,255)
+    colorBox.TextXAlignment = Enum.TextXAlignment.Left
+    colorBox.Text = state.color
+    colorBox.ClearTextOnFocus = false
+    colorBox.Parent = colorRow
+    colorBox.FocusLost:Connect(function()
+        state.color = colorBox.Text
+        if state.isOn then attachToChar() end
+    end)
+
+    local szRow = Instance.new("Frame")
+    szRow.Size = UDim2.new(1,-6,0,22)
+    szRow.BackgroundTransparency = 1
+    szRow.LayoutOrder = base+4
+    szRow.Parent = sc
+    local szl = Instance.new("UIListLayout", szRow)
+    szl.FillDirection = Enum.FillDirection.Horizontal
+    szl.Padding = UDim.new(0,4)
+    szl.Parent = szRow
+
+    local function mkSmallInput(prefix, def, key)
+        local holder = Instance.new("Frame")
+        holder.Size = UDim2.new(0,145,1,0)
+        holder.BackgroundColor3 = Color3.fromRGB(30,35,50)
+        holder.BorderSizePixel = 0
+        holder.Parent = szRow
+        Instance.new("UICorner", holder).CornerRadius = UDim.new(0,3)
+
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(0,40,1,0)
+        l.Position = UDim2.new(0,5,0,0)
+        l.BackgroundTransparency = 1
+        l.Font = Enum.Font.Gotham
+        l.TextSize = 9
+        l.TextColor3 = Color3.fromRGB(150,180,220)
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        l.Text = prefix
+        l.Parent = holder
+
+        local b = Instance.new("TextBox")
+        b.Size = UDim2.new(1,-50,1,0)
+        b.Position = UDim2.new(0,45,0,0)
+        b.BackgroundTransparency = 1
+        b.Font = Enum.Font.Code
+        b.TextSize = 10
+        b.TextColor3 = Color3.fromRGB(220,230,255)
+        b.TextXAlignment = Enum.TextXAlignment.Left
+        b.Text = def
+        b.ClearTextOnFocus = false
+        b.Parent = holder
+        b.FocusLost:Connect(function()
+            state[key] = b.Text
+            if state.isOn then attachToChar() end
+        end)
+        return b
+    end
+    mkSmallInput("大小:", state.size, "size")
+    mkSmallInput("数量:", state.count, "count")
+
+    local btnRow = Instance.new("Frame")
+    btnRow.Size = UDim2.new(1,-6,0,26)
+    btnRow.BackgroundTransparency = 1
+    btnRow.LayoutOrder = base+5
+    btnRow.Parent = sc
+    local brl = Instance.new("UIListLayout", btnRow)
+    brl.FillDirection = Enum.FillDirection.Horizontal
+    brl.Padding = UDim.new(0,4)
+    brl.Parent = btnRow
+
+    local function mkBtn(text, color, w, name)
+        local b = Instance.new("TextButton")
+        b.Name = name or "BTN"
+        b.Size = UDim2.new(0,w,1,0)
+        b.BackgroundColor3 = color
+        b.Text = text
+        b.TextColor3 = Color3.fromRGB(255,255,255)
+        b.TextSize = 10
+        b.Font = Enum.Font.GothamBold
+        b.BorderSizePixel = 0
+        b.Parent = btnRow
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,3)
+        return b
+    end
+
+    local toggleBtn = mkBtn(
+        state.isOn and "🔥 关火" or "🔥 开火",
+        state.isOn and Color3.fromRGB(200,80,80) or Color3.fromRGB(50,130,220),
+        90, "FLAME_TOGGLE")
+    local applyBtn = mkBtn("✓ 应用", Color3.fromRGB(60,170,100), 90, "FLAME_APPLY")
+    local resetColorBtn = mkBtn("↻ 蓝", Color3.fromRGB(100,100,140), 88, "FLAME_RESETCOLOR")
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        state.isOn = not state.isOn
+        if state.isOn then
+            attachToChar()
+            toggleBtn.Text = "🔥 关火"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(200,80,80)
+            status.Text = "  已开启"
+            status.TextColor3 = Color3.fromRGB(120,220,255)
+        else
+            detachAll()
+            toggleBtn.Text = "🔥 开火"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(50,130,220)
+            status.Text = "  已关闭"
+            status.TextColor3 = Color3.fromRGB(180,180,180)
+        end
+    end)
+    applyBtn.MouseButton1Click:Connect(function()
+        state.isOn = true
+        toggleBtn.Text = "🔥 关火"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(200,80,80)
+        attachToChar()
+        status.Text = "  已应用"
+        status.TextColor3 = Color3.fromRGB(120,220,255)
+    end)
+    resetColorBtn.MouseButton1Click:Connect(function()
+        state.color = "80, 180, 255"
+        colorBox.Text = state.color
+        if state.isOn then attachToChar() end
+    end)
+
+    -- 一键穿脱章节
+    local wearHdr = Instance.new("TextLabel")
+    wearHdr.Name = "WEAR_MODULE"
+    wearHdr.Size = UDim2.new(1,-6,0,20)
+    wearHdr.BackgroundColor3 = Color3.fromRGB(80,40,100)
+    wearHdr.BorderSizePixel = 0
+    wearHdr.Font = Enum.Font.GothamBold
+    wearHdr.TextSize = 11
+    wearHdr.TextColor3 = Color3.fromRGB(255,200,255)
+    wearHdr.TextXAlignment = Enum.TextXAlignment.Left
+    wearHdr.Text = "  ━━ 👗 一键穿戴 ━━"
+    wearHdr.LayoutOrder = base+6
+    wearHdr.Parent = sc
+    Instance.new("UICorner", wearHdr).CornerRadius = UDim.new(0,3)
+
+    local wearStatus = Instance.new("TextLabel")
+    wearStatus.Size = UDim2.new(1,-6,0,18)
+    wearStatus.BackgroundColor3 = Color3.fromRGB(25,20,35)
+    wearStatus.BorderSizePixel = 0
+    wearStatus.Font = Enum.Font.Code
+    wearStatus.TextSize = 9
+    wearStatus.TextColor3 = Color3.fromRGB(200,180,220)
+    wearStatus.TextXAlignment = Enum.TextXAlignment.Left
+    wearStatus.Text = "  就绪"
+    wearStatus.LayoutOrder = base+7
+    wearStatus.Parent = sc
+    Instance.new("UICorner", wearStatus).CornerRadius = UDim.new(0,3)
+
+    local wearBtnRow = Instance.new("Frame")
+    wearBtnRow.Size = UDim2.new(1,-6,0,26)
+    wearBtnRow.BackgroundTransparency = 1
+    wearBtnRow.LayoutOrder = base+8
+    wearBtnRow.Parent = sc
+    local wbl = Instance.new("UIListLayout", wearBtnRow)
+    wbl.FillDirection = Enum.FillDirection.Horizontal
+    wbl.Padding = UDim.new(0,4)
+    wbl.Parent = wearBtnRow
+
+    local function mkWearBtn(text, color, w, name)
+        local b = Instance.new("TextButton")
+        b.Name = name
+        b.Size = UDim2.new(0,w,1,0)
+        b.BackgroundColor3 = color
+        b.Text = text
+        b.TextColor3 = Color3.fromRGB(255,255,255)
+        b.TextSize = 10
+        b.Font = Enum.Font.GothamBold
+        b.BorderSizePixel = 0
+        b.Parent = wearBtnRow
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,3)
+        return b
+    end
+
+    local wearAllBtn  = mkWearBtn("👗 一键穿全部", Color3.fromRGB(180,100,200), 145, "WEAR_ALL")
+    local wearNoneBtn = mkWearBtn("👕 一键脱光",  Color3.fromRGB(200,90,90), 145, "WEAR_NONE")
+
+    -- 一键穿全部
+    wearAllBtn.MouseButton1Click:Connect(function()
+        wearStatus.Text = "  ⏳ 穿戴中..."
+        wearStatus.TextColor3 = Color3.fromRGB(255,220,120)
+        task.spawn(function()
+            -- 先把 R6 列表里所有未穿的按钮点一遍
+            local cnt1 = clickAllAccessoryBtns(true)
+            -- 再自己穿内置 3 件
+            local cnt2 = wearAllDefault()
+            -- 开火
+            state.isOn = true
+            attachToChar()
+            toggleBtn.Text = "🔥 关火"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(200,80,80)
+            status.Text = "  已开启"
+            status.TextColor3 = Color3.fromRGB(120,220,255)
+            wearStatus.Text = string.format("  ✅ 已穿 %d 件 (列表%d+内置%d) + 开火", cnt1+cnt2, cnt1, cnt2)
+            wearStatus.TextColor3 = Color3.fromRGB(140,240,160)
+        end)
+    end)
+
+    -- ★★★ 一键脱光（照搬 R15 逻辑）★★★
+    wearNoneBtn.MouseButton1Click:Connect(function()
+        wearStatus.Text = "  ⏳ 脱光中..."
+        wearStatus.TextColor3 = Color3.fromRGB(255,220,120)
+        task.spawn(function()
+            -- 先点一遍 R6 列表里的按钮（让 R6 内部状态同步）
+            local cnt1 = clickAllAccessoryBtns(false)
+            -- 断开自定义配件
+            local cnt2 = #customItems
+            clearCustomItems()
+            -- ★ 调 R15 版脱衣逻辑
+            local cnt3 = cleanCharacter()
+
+            -- 关火
+            state.isOn = false
+            detachAll()
+            toggleBtn.Text = "🔥 开火"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(50,130,220)
+            status.Text = "  已关闭"
+            status.TextColor3 = Color3.fromRGB(180,180,180)
+
+            wearStatus.Text = string.format("  ✅ 已脱光 (R6列表%d + 内置%d + Accoutrement%d) + 关火", cnt1, cnt2, cnt3)
+            wearStatus.TextColor3 = Color3.fromRGB(240,200,140)
+        end)
+    end)
+end
+
+-- 初始注入
+buildUI()
+attachToChar()
+
+-- 检测 R6 rebuild
+task.spawn(function()
+    while task.wait(0.5) do
+        if not sc or not sc.Parent then break end
+        if not sc:FindFirstChild("FLAME_MODULE") or not sc:FindFirstChild("WEAR_MODULE") then
+            uiRefs = {}
+            buildUI()
+            if state.isOn then
+                task.wait(0.1)
+                attachToChar()
+            end
+        end
+    end
+end)
+
+-- 按 E 开关火焰
+UIS.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.E then
+        state.isOn = not state.isOn
+        if state.isOn then attachToChar() else detachAll() end
+    end
+end)
+
+-- 重生
+LP.CharacterAdded:Connect(function()
+    task.wait(1)
+    attached = {}
+    customItems = {}
+    if state.isOn then attachToChar() end
+end)
+
+print("[整合] R6 + 火焰 + R15脱衣逻辑 已载入")
