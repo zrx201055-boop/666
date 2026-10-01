@@ -1,0 +1,706 @@
+loadstring(game:HttpGet("https://raw.githubusercontent.com/zrx201055-boop/666/main/r6mhb"))()
+task.wait(3)
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local pg = LP:WaitForChild("PlayerGui")
+local gui = pg:FindFirstChild("CesiLoader_R6")
+if not gui then return warn("找不到 r6mhb") end
+
+local function findSc()
+    for _, o in ipairs(gui:GetDescendants()) do
+        if o:IsA("ScrollingFrame") then return o end
+    end
+    return nil
+end
+
+local sc = findSc()
+if not sc then return warn("找不到滚动区") end
+
+local g = getgenv and getgenv() or _G
+if not g.__F then
+    g.__F = {on = false, pos = "all", ox = 0, oy = 0, oz = 0}
+end
+local S = g.__F
+S.ox = S.ox or 0
+S.oy = S.oy or 0
+S.oz = S.oz or 0
+if S.keepAppearance == nil then S.keepAppearance = true end
+if S.pos == nil then S.pos = "all" end
+
+local suppressedHair = {}
+local wornList = {}
+local headInfo = nil
+local headFace = nil
+local respawnTime = 0
+local clothingInfo = {shirt = nil, pants = nil, graphic = nil}
+
+------------------------------------------------------------
+-- 扫描循环（保留原脚本 respawnTime 保护）
+------------------------------------------------------------
+task.spawn(function()
+    while task.wait(0.5) do
+        local c = LP.Character
+        if c and (tick() - respawnTime > 5) then
+            local hum = c:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local hd = c:FindFirstChild("Head")
+                if hd then
+                    if hd:IsA("MeshPart") then
+                        headInfo = {
+                            headType = "MeshPart", mesh = hd.MeshId, tex = hd.TextureID,
+                            size = hd.Size, transparency = hd.Transparency,
+                            ltm = hd.LocalTransparencyModifier,
+                        }
+                    elseif hd:IsA("Part") then
+                        local sm = hd:FindFirstChildOfClass("SpecialMesh")
+                        if sm then
+                            headInfo = {
+                                headType = "PartWithMesh", mesh = sm.MeshId, tex = sm.TextureId,
+                                scale = sm.Scale, offset = sm.Offset,
+                                transparency = hd.Transparency,
+                                ltm = hd.LocalTransparencyModifier,
+                            }
+                        else
+                            headInfo = {
+                                headType = "Part",
+                                transparency = hd.Transparency,
+                                ltm = hd.LocalTransparencyModifier,
+                            }
+                        end
+                    end
+                    local faceDecal = hd:FindFirstChildOfClass("Decal")
+                    if faceDecal then
+                        headFace = {tex = faceDecal.Texture, cls = "Decal"}
+                    else
+                        local faceTex = hd:FindFirstChildOfClass("Texture")
+                        if faceTex then headFace = {tex = faceTex.Texture, cls = "Texture"} end
+                    end
+                end
+
+                local sh = c:FindFirstChildOfClass("Shirt")
+                if sh and sh.ShirtTemplate ~= "" then clothingInfo.shirt = sh.ShirtTemplate end
+                local pa = c:FindFirstChildOfClass("Pants")
+                if pa and pa.PantsTemplate ~= "" then clothingInfo.pants = pa.PantsTemplate end
+                local gr = c:FindFirstChildOfClass("ShirtGraphic")
+                if gr and gr.Graphic ~= "" then clothingInfo.graphic = gr.Graphic end
+
+                local currentWorn = {}
+                for _, obj in ipairs(c:GetChildren()) do
+                    if obj:IsA("MeshPart")
+                        and (obj.Name:sub(1, 5) == "Item_" or obj.Name:sub(1, 10) == "CustomAcc_") then
+                        local mount = nil
+                        for _, n in ipairs({
+                            "Head", "Torso", "HumanoidRootPart",
+                            "Left Arm", "Right Arm", "Left Leg", "Right Leg",
+                            "UpperTorso", "LowerTorso"
+                        }) do
+                            local p = c:FindFirstChild(n)
+                            if p and (p.Position - obj.Position).Magnitude < 12 then
+                                mount = n; break
+                            end
+                        end
+                        if mount then
+                            local mp = c:FindFirstChild(mount)
+                            currentWorn[obj.Name] = {
+                                name = obj.Name, mount = mount, mesh = obj.MeshId,
+                                tex = obj.TextureID, size = obj.Size,
+                                offset = mp.CFrame:ToObjectSpace(obj.CFrame),
+                            }
+                        end
+                    end
+                end
+                wornList = currentWorn
+            end
+        end
+    end
+end)
+
+------------------------------------------------------------
+-- 火焰
+------------------------------------------------------------
+local A = {}
+
+-- ★ 新增 "limbs_head" = 四肢 + 头部
+local function gp(k)
+    local c = LP.Character
+    if not c then return {} end
+    local L = {}
+    local function add(ns)
+        for _, n in ipairs(ns) do
+            local p = c:FindFirstChild(n)
+            if p and p:IsA("BasePart") then table.insert(L, p) end
+        end
+    end
+    if k == "all" then
+        add({"HumanoidRootPart", "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"})
+    elseif k == "limbs_head" then
+        add({"Head", "Left Arm", "Right Arm", "Left Leg", "Right Leg"})
+    elseif k == "head" then add({"Head"})
+    elseif k == "right" then add({"Right Arm", "RightHand"})
+    elseif k == "left" then add({"Left Arm", "LeftHand"})
+    elseif k == "torso" then add({"Torso"})
+    elseif k == "legs" then add({"Left Leg", "Right Leg"}) end
+    return L
+end
+
+local function da()
+    for px, gr in pairs(A) do
+        pcall(function()
+            if gr.fire then gr.fire:Destroy() end
+            if gr.light then gr.light:Destroy() end
+            if px and px.Parent then px:Destroy() end
+        end)
+    end
+    A = {}
+end
+
+local function aa()
+    da()
+    if not S.on then return end
+    for _, t in ipairs(gp(S.pos)) do
+        local p = Instance.new("Part")
+        p.Name = "FlameProxy"
+        p.Size = Vector3.new(.1, .1, .1)
+        p.Transparency = 1
+        p.CanCollide = false
+        p.Massless = true
+        p.Anchored = false
+        p.CFrame = t.CFrame * CFrame.new(S.ox, S.oy, S.oz)
+        p.Parent = t
+        local w = Instance.new("WeldConstraint")
+        w.Part0 = t; w.Part1 = p; w.Parent = p
+        local fi = Instance.new("Fire")
+        fi.Color = Color3.fromRGB(80, 180, 255)
+        fi.SecondaryColor = Color3.fromRGB(180, 220, 255)
+        fi.Heat = 5; fi.Size = 5; fi.Parent = p
+        local li = Instance.new("PointLight")
+        li.Color = Color3.fromRGB(80, 180, 255)
+        li.Brightness = 3; li.Range = 10; li.Parent = p
+        A[p] = {fire = fi, light = li}
+    end
+end
+
+------------------------------------------------------------
+-- 重生恢复
+------------------------------------------------------------
+LP.CharacterAdded:Connect(function(newChar)
+    respawnTime = tick()
+    task.wait(2)
+    local hum = newChar:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local t0 = tick()
+        while hum.Health <= 0 and (tick() - t0) < 3 do task.wait(0.1) end
+    end
+    task.wait(0.3)
+
+    if S.keepAppearance then
+        local hd = newChar:FindFirstChild("Head")
+        if hd and headInfo then
+            if headInfo.headType == "MeshPart" and hd:IsA("MeshPart") then
+                hd.MeshId = headInfo.mesh; hd.TextureID = headInfo.tex; hd.Size = headInfo.size
+            elseif headInfo.headType == "PartWithMesh" and hd:IsA("Part") then
+                local sm = hd:FindFirstChildOfClass("SpecialMesh")
+                if not sm then sm = Instance.new("SpecialMesh"); sm.Name = "Mesh"; sm.Parent = hd end
+                sm.MeshId = headInfo.mesh; sm.TextureId = headInfo.tex
+                sm.Scale = headInfo.scale; sm.Offset = headInfo.offset
+            end
+            if headInfo.transparency ~= nil then
+                hd.Transparency = headInfo.transparency
+                hd.LocalTransparencyModifier = headInfo.ltm
+            end
+            if headFace and headInfo.transparency and headInfo.transparency < 0.5 then
+                for _, o in ipairs(hd:GetChildren()) do
+                    if o:IsA("Decal") or o:IsA("Texture") then o:Destroy() end
+                end
+                local fd = Instance.new(headFace.cls)
+                fd.Texture = headFace.tex; fd.Name = "Face"; fd.Parent = hd
+            end
+            task.spawn(function()
+                for _ = 1, 50 do
+                    task.wait(0.1)
+                    if not S.keepAppearance then break end
+                    local cur = LP.Character
+                    if not cur then break end
+                    local h = cur:FindFirstChild("Head")
+                    if h and headInfo.transparency ~= nil then
+                        h.Transparency = headInfo.transparency
+                        h.LocalTransparencyModifier = headInfo.ltm
+                    end
+                end
+            end)
+        end
+
+        if clothingInfo.shirt then
+            local sh = newChar:FindFirstChildOfClass("Shirt")
+            if not sh then sh = Instance.new("Shirt"); sh.Parent = newChar end
+            sh.ShirtTemplate = clothingInfo.shirt
+        end
+        if clothingInfo.pants then
+            local pa = newChar:FindFirstChildOfClass("Pants")
+            if not pa then pa = Instance.new("Pants"); pa.Parent = newChar end
+            pa.PantsTemplate = clothingInfo.pants
+        end
+        if clothingInfo.graphic then
+            local gr = newChar:FindFirstChildOfClass("ShirtGraphic")
+            if not gr then gr = Instance.new("ShirtGraphic"); gr.Parent = newChar end
+            gr.Graphic = clothingInfo.graphic
+        end
+
+        for _, o in ipairs(newChar:GetDescendants()) do
+            if suppressedHair[o.Name] then o:Destroy() end
+        end
+
+        for name, info in pairs(wornList) do
+            local mount = newChar:FindFirstChild(info.mount)
+            if mount and mount:IsA("BasePart") then
+                local h = Instance.new("MeshPart")
+                h.Name = name; h.MeshId = info.mesh; h.TextureID = info.tex
+                h.Size = info.size; h.CanCollide = false; h.Massless = true
+                h.Anchored = false; h.CFrame = mount.CFrame * info.offset
+                h.Parent = newChar
+                local weld = Instance.new("WeldConstraint")
+                weld.Part0 = mount; weld.Part1 = h; weld.Parent = h
+            end
+        end
+    end
+
+    task.wait(0.3)
+    if S.on then da(); aa() end
+end)
+
+------------------------------------------------------------
+-- 按钮触发
+------------------------------------------------------------
+local function fireBtn(btn)
+    if type(firesignal) == "function" then
+        if pcall(function() firesignal(btn.MouseButton1Click) end) then return true end
+    end
+    if type(getconnections) == "function" then
+        if pcall(function()
+            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
+                if c.Function then pcall(c.Function) end
+            end
+        end) then return true end
+    end
+    if pcall(function() btn:Activate() end) then return true end
+    return false
+end
+
+local function collectWearButtons()
+    local list = {}
+    for _, btn in ipairs(sc:GetDescendants()) do
+        if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+            local txt = btn.Text or ""
+            if txt:find("%[.-%]") then table.insert(list, btn) end
+        end
+    end
+    return list
+end
+
+local function wearExternal()
+    local n = 0
+    for _, btn in ipairs(collectWearButtons()) do
+        if fireBtn(btn) then n = n + 1 end
+        task.wait(0.1)
+    end
+    return n
+end
+
+local function ch()
+    local c = LP.Character
+    if not c then return 0 end
+    local n = 0
+    for _, o in ipairs(c:GetDescendants()) do
+        local isHair = false
+        if o:IsA("Accessory") then
+            local ok, at = pcall(function() return o.AccessoryType end)
+            if ok and at == Enum.AccessoryType.Hair then isHair = true end
+        end
+        if not isHair then
+            local nm = o.Name:lower()
+            if nm:find("hair") or nm:find("白发") or nm:find("wig") then isHair = true end
+        end
+        if isHair then
+            suppressedHair[o.Name] = true
+            o:Destroy(); n = n + 1
+        end
+    end
+    return n
+end
+
+local function ca()
+    local c = LP.Character
+    if not c then return 0, 0 end
+    local n = 0
+    for _, o in ipairs(c:GetChildren()) do
+        if o.Name:sub(1, 5) == "Item_" or o.Name:sub(1, 10) == "CustomAcc_" then
+            o:Destroy(); n = n + 1
+        end
+    end
+    local hn = ch(); n = n + hn
+    for _, cls in ipairs({"Shirt", "Pants", "ShirtGraphic"}) do
+        local x = c:FindFirstChildOfClass(cls)
+        if x then x:Destroy(); n = n + 1 end
+    end
+    return n, hn
+end
+
+local function rewearAll()
+    ca()
+    task.wait(0.4)
+    wearExternal()
+end
+
+------------------------------------------------------------
+-- 悬浮窗
+------------------------------------------------------------
+local floatGui, mainFrame, miniBtnObj
+
+local function createFloatingWindow()
+    if pg:FindFirstChild("MyCustomFloatUI") then
+        pg.MyCustomFloatUI:Destroy()
+    end
+
+    floatGui = Instance.new("ScreenGui")
+    floatGui.Name = "MyCustomFloatUI"
+    floatGui.ResetOnSpawn = false
+    floatGui.Parent = pg
+
+    mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 220, 0, 480)  -- ★ 加高一点
+    mainFrame.Position = UDim2.new(0.75, 0, 0.12, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Draggable = true
+    mainFrame.Parent = floatGui
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+    title.Text = "⚡ 快捷控制面板"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 12
+    title.Parent = mainFrame
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+    local hideBtn = Instance.new("TextButton")
+    hideBtn.Size = UDim2.new(0, 30, 0, 30)
+    hideBtn.Position = UDim2.new(1, -30, 0, 0)
+    hideBtn.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+    hideBtn.Text = "—"
+    hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hideBtn.Font = Enum.Font.GothamBold
+    hideBtn.Parent = title
+    Instance.new("UICorner", hideBtn).CornerRadius = UDim.new(0, 8)
+
+    miniBtnObj = Instance.new("TextButton")
+    miniBtnObj.Name = "MiniBtn"
+    miniBtnObj.Size = UDim2.new(0, 40, 0, 40)
+    miniBtnObj.Position = UDim2.new(0, 20, 0.5, 0)
+    miniBtnObj.BackgroundColor3 = Color3.fromRGB(50, 130, 220)
+    miniBtnObj.Text = "⚡"
+    miniBtnObj.TextColor3 = Color3.fromRGB(255, 255, 255)
+    miniBtnObj.Font = Enum.Font.GothamBold
+    miniBtnObj.TextSize = 20
+    miniBtnObj.Visible = false
+    miniBtnObj.Active = true
+    miniBtnObj.Draggable = true
+    miniBtnObj.Parent = floatGui
+    Instance.new("UICorner", miniBtnObj).CornerRadius = UDim.new(0, 20)
+
+    hideBtn.MouseButton1Click:Connect(function()
+        mainFrame.Visible = false
+        miniBtnObj.Visible = true
+    end)
+    miniBtnObj.MouseButton1Click:Connect(function()
+        mainFrame.Visible = true
+        miniBtnObj.Visible = false
+    end)
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 5)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = mainFrame
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingTop = UDim.new(0, 35)
+    padding.PaddingLeft = UDim.new(0, 10)
+    padding.PaddingRight = UDim.new(0, 10)
+    padding.Parent = mainFrame
+
+    local function mkBtn(txt, color, order, cb)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 30)
+        btn.BackgroundColor3 = color
+        btn.Text = txt
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 11
+        btn.LayoutOrder = order
+        btn.Parent = mainFrame
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+        btn.MouseButton1Click:Connect(cb)
+        return btn
+    end
+
+    local function mkLabel(txt, order)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 0, 20)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = txt
+        lbl.TextColor3 = Color3.fromRGB(150, 200, 255)
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 11
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.LayoutOrder = order
+        lbl.Parent = mainFrame
+        return lbl
+    end
+
+    mkLabel("👗 外观一键操作", 1)
+    mkBtn("🔄 重新穿戴", Color3.fromRGB(80, 160, 90), 2, function()
+        task.spawn(rewearAll)
+    end)
+    mkBtn("👕 一键脱光", Color3.fromRGB(200, 90, 90), 3, function()
+        task.spawn(ca)
+    end)
+
+    mkLabel("💀 死亡保持外观", 4)
+    local keepBtn = mkBtn(
+        S.keepAppearance and "✅ 死亡保持: 开" or "❌ 死亡保持: 关",
+        S.keepAppearance and Color3.fromRGB(80, 160, 90) or Color3.fromRGB(90, 90, 110),
+        5,
+        function()
+            S.keepAppearance = not S.keepAppearance
+            if S.keepAppearance then
+                keepBtn.Text = "✅ 死亡保持: 开"
+                keepBtn.BackgroundColor3 = Color3.fromRGB(80, 160, 90)
+            else
+                keepBtn.Text = "❌ 死亡保持: 关"
+                keepBtn.BackgroundColor3 = Color3.fromRGB(90, 90, 110)
+            end
+        end)
+
+    ------------------------------------------------------------
+    -- ★ 火焰区域：新增"显示位置"选择
+    ------------------------------------------------------------
+    mkLabel("🔥 火焰显示位置", 6)
+
+    local posDefs = {
+        {key = "all",        label = "全身"},
+        {key = "limbs_head", label = "四肢+头"},
+        {key = "head",       label = "仅头部"},
+        {key = "torso",      label = "躯干"},
+        {key = "legs",       label = "仅腿"},
+    }
+    local posBtns = {}
+
+    local function refreshPosBtns()
+        for k, b in pairs(posBtns) do
+            if S.pos == k then
+                b.BackgroundColor3 = Color3.fromRGB(50, 130, 220)
+                b.TextColor3 = Color3.fromRGB(255, 255, 255)
+            else
+                b.BackgroundColor3 = Color3.fromRGB(55, 55, 75)
+                b.TextColor3 = Color3.fromRGB(200, 200, 200)
+            end
+        end
+    end
+
+    local function makePosRow(defs, order)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 24)
+        row.BackgroundTransparency = 1
+        row.LayoutOrder = order
+        row.Parent = mainFrame
+
+        local rl = Instance.new("UIListLayout")
+        rl.FillDirection = Enum.FillDirection.Horizontal
+        rl.Padding = UDim.new(0, 4)
+        rl.Parent = row
+
+        for _, d in ipairs(defs) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(0, 58, 0, 22)
+            b.BackgroundColor3 = Color3.fromRGB(55, 55, 75)
+            b.Text = d.label
+            b.TextColor3 = Color3.fromRGB(200, 200, 200)
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 10
+            b.Parent = row
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+            posBtns[d.key] = b
+            b.MouseButton1Click:Connect(function()
+                S.pos = d.key
+                refreshPosBtns()
+                if S.on then aa() end  -- 正在燃就立刻换位置
+            end)
+        end
+    end
+
+    makePosRow({
+        {key = "all",        label = "全身"},
+        {key = "limbs_head", label = "四肢+头"},
+        {key = "head",       label = "仅头部"},
+    }, 7)
+
+    makePosRow({
+        {key = "torso", label = "躯干"},
+        {key = "legs",  label = "仅腿"},
+    }, 8)
+
+    refreshPosBtns()
+
+    ------------------------------------------------------------
+    -- 火焰微调
+    ------------------------------------------------------------
+    mkLabel("🔧 火焰位置微调", 9)
+
+    local function mkAxisRow(axis, key, order)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 26)
+        row.BackgroundTransparency = 1
+        row.LayoutOrder = order
+        row.Parent = mainFrame
+
+        local rl = Instance.new("UIListLayout")
+        rl.FillDirection = Enum.FillDirection.Horizontal
+        rl.Padding = UDim.new(0, 3)
+        rl.Parent = row
+
+        local lbl = Instance.new("TextButton")
+        lbl.Size = UDim2.new(0, 50, 0, 24)
+        lbl.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+        lbl.Text = axis .. ": " .. string.format("%.1f", S[key])
+        lbl.TextColor3 = Color3.fromRGB(255, 200, 100)
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 10
+        lbl.AutoButtonColor = false
+        lbl.Parent = row
+
+        local function update()
+            lbl.Text = axis .. ": " .. string.format("%.1f", S[key])
+        end
+
+        for _, d in ipairs({
+            {"-0.5", -0.5, Color3.fromRGB(140, 70, 70)},
+            {"+0.5", 0.5, Color3.fromRGB(50, 130, 220)},
+        }) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(0, 40, 0, 24)
+            b.BackgroundColor3 = d[3]
+            b.Text = d[1]
+            b.TextColor3 = Color3.fromRGB(255, 255, 255)
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 10
+            b.Parent = row
+            b.MouseButton1Click:Connect(function()
+                S[key] = S[key] + d[2]
+                update()
+                if S.on then aa() end
+            end)
+        end
+
+        local rb = Instance.new("TextButton")
+        rb.Size = UDim2.new(0, 40, 0, 24)
+        rb.BackgroundColor3 = Color3.fromRGB(80, 80, 100)
+        rb.Text = "归零"
+        rb.TextColor3 = Color3.fromRGB(255, 255, 255)
+        rb.Font = Enum.Font.GothamBold
+        rb.TextSize = 10
+        rb.Parent = row
+        rb.MouseButton1Click:Connect(function()
+            S[key] = 0
+            update()
+            if S.on then aa() end
+        end)
+    end
+
+    mkAxisRow("X", "ox", 10)
+    mkAxisRow("Y", "oy", 11)
+    mkAxisRow("Z", "oz", 12)
+
+    local fireBtnObj = mkBtn(S.on and "🔥 关火" or "🔥 开火",
+        S.on and Color3.fromRGB(200, 80, 80) or Color3.fromRGB(50, 130, 220), 13,
+        function()
+            S.on = not S.on
+            if S.on then
+                aa()
+                fireBtnObj.Text = "🔥 关火"
+                fireBtnObj.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+            else
+                da()
+                fireBtnObj.Text = "🔥 开火"
+                fireBtnObj.BackgroundColor3 = Color3.fromRGB(50, 130, 220)
+            end
+        end)
+
+    print("✓ 独立悬浮窗已创建（含四肢+头 火焰位置）")
+end
+
+createFloatingWindow()
+
+LP.CharacterAdded:Connect(function()
+    task.wait(1)
+    if not pg:FindFirstChild("MyCustomFloatUI") then
+        createFloatingWindow()
+    end
+end)
+
+------------------------------------------------------------
+-- 隐藏按钮
+------------------------------------------------------------
+local function findClearButton()
+    for _, b in ipairs(sc:GetDescendants()) do
+        if b:IsA("TextButton") and b.Text == "清空列表" then
+            return b
+        end
+    end
+    return nil
+end
+
+local function ensureHideToggle()
+    local clearBtn = findClearButton()
+    if not clearBtn then return end
+    if clearBtn.Parent:FindFirstChild("HideToggleBtn") then return end
+
+    local toggle = Instance.new("TextButton")
+    toggle.Name = "HideToggleBtn"
+    toggle.Size = UDim2.new(0, 100, 0, 30)
+    toggle.BackgroundColor3 = Color3.fromRGB(90, 90, 130)
+    toggle.Text = "隐藏悬浮窗"
+    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggle.Font = Enum.Font.GothamBold
+    toggle.TextSize = 11
+    toggle.AutoButtonColor = true
+    toggle.Parent = clearBtn.Parent
+    Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 5)
+
+    toggle.MouseButton1Click:Connect(function()
+        if not floatGui then return end
+        local mf = floatGui:FindFirstChild("MainFrame")
+        local mb = floatGui:FindFirstChild("MiniBtn")
+        if mf and mf.Visible then
+            mf.Visible = false
+            if mb then mb.Visible = true end
+            toggle.Text = "显示悬浮窗"
+        else
+            if mf then mf.Visible = true end
+            if mb then mb.Visible = false end
+            toggle.Text = "隐藏悬浮窗"
+        end
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(ensureHideToggle)
+    end
+end)
+
+print("✓ 脚本加载完成")
